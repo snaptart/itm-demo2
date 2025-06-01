@@ -1,4 +1,4 @@
-// backend/src/models/Event.js (Enhanced with Timezone Handling)
+// backend/src/models/Event.js (Fixed associations with defensive checks)
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
@@ -366,27 +366,50 @@ Event.addHook('beforeSave', (event, options) => {
   }
 });
 
-// Associations
+// FIXED: Associations with defensive checks and detailed logging
 Event.associate = function(models) {
-  Event.belongsTo(models.Resource, {
-    foreignKey: 'resource_id',
-    as: 'resource'
-  });
+  console.log('Setting up Event associations...');
+  console.log('Available models:', Object.keys(models));
   
-  Event.hasMany(models.Episode, {
-    foreignKey: 'event_id',
-    as: 'episodes'
-  });
-  
-  Event.belongsTo(models.Event, {
-    foreignKey: 'parent_event_id',
-    as: 'parentEvent'
-  });
-  
-  Event.hasMany(models.Event, {
-    foreignKey: 'parent_event_id',
-    as: 'childEvents'
-  });
+  try {
+    // Resource association
+    if (models.Resource) {
+      Event.belongsTo(models.Resource, {
+        foreignKey: 'resource_id',
+        as: 'resource'
+      });
+      console.log('✓ Event -> Resource association created');
+    } else {
+      console.warn('⚠ Resource model not found for Event association');
+    }
+    
+    // Episode association (this was causing the error)
+    if (models.Episode) {
+      Event.hasMany(models.Episode, {
+        foreignKey: 'event_id',
+        as: 'episodes'
+      });
+      console.log('✓ Event -> Episodes association created');
+    } else {
+      console.warn('⚠ Episode model not found for Event association');
+    }
+    
+    // Self-referencing parent/child association
+    Event.belongsTo(Event, {
+      foreignKey: 'parent_event_id',
+      as: 'parentEvent'
+    });
+    
+    Event.hasMany(Event, {
+      foreignKey: 'parent_event_id',
+      as: 'childEvents'
+    });
+    console.log('✓ Event self-referencing associations created');
+    
+  } catch (error) {
+    console.error('❌ Error in Event.associate:', error.message);
+    throw error;
+  }
 };
 
 module.exports = Event;

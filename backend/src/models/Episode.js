@@ -1,4 +1,4 @@
-// backend/src/models/Episode.js (Enhanced with Timezone Handling)
+// backend/src/models/Episode.js (Fixed associations with defensive checks)
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
@@ -353,25 +353,54 @@ Episode.prototype.checkConflictsWith = function(otherEpisode, facilityTimezone =
   }
 };
 
-// Associations
+// FIXED: Associations with defensive checks and detailed logging
 Episode.associate = function(models) {
-  Episode.belongsTo(models.Event, {
-    foreignKey: 'event_id',
-    as: 'event'
-  });
+  console.log('Setting up Episode associations...');
+  console.log('Available models for Episode:', Object.keys(models));
   
-  Episode.belongsTo(models.Program, {
-    foreignKey: 'program_id',
-    as: 'program'
-  });
-  
-  Episode.belongsTo(models.Program, {
-    foreignKey: 'assigned_to_program_id',
-    as: 'assignedProgram'
-  });
-  
-  Episode.hasMany(models.Booking, {
-    foreignKey: 'episode_id',
-    as: 'bookings'
-  });
+  try {
+    // Event association
+    if (models.Event) {
+      Episode.belongsTo(models.Event, {
+        foreignKey: 'event_id',
+        as: 'event'
+      });
+      console.log('✓ Episode -> Event association created');
+    } else {
+      console.warn('⚠ Event model not found for Episode association');
+    }
+    
+    // Program associations
+    if (models.Program) {
+      Episode.belongsTo(models.Program, {
+        foreignKey: 'program_id',
+        as: 'program'
+      });
+      
+      Episode.belongsTo(models.Program, {
+        foreignKey: 'assigned_to_program_id',
+        as: 'assignedProgram'
+      });
+      console.log('✓ Episode -> Program associations created');
+    } else {
+      console.warn('⚠ Program model not found for Episode association');
+    }
+    
+    // Booking association
+    if (models.Booking) {
+      Episode.hasMany(models.Booking, {
+        foreignKey: 'episode_id',
+        as: 'bookings'
+      });
+      console.log('✓ Episode -> Bookings association created');
+    } else {
+      console.warn('⚠ Booking model not found for Episode association');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error in Episode.associate:', error.message);
+    throw error;
+  }
 };
+
+module.exports = Episode;
