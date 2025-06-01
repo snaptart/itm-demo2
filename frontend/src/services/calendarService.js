@@ -1,10 +1,13 @@
-// frontend/src/services/calendarService.js (Enhanced with Timezone Support)
+// frontend/src/services/calendarService.js (Enhanced with Comprehensive Timezone Support)
 import api from './api';
 import { dateUtils } from '../utils/dateUtils';
 
 // Retry configuration
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
+
+// Cache for facility timezones
+const facilityTimezoneCache = new Map();
 
 // Helper function to sleep
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -42,23 +45,40 @@ const retryOperation = async (operation, retries = MAX_RETRIES) => {
 };
 
 const calendarService = {
-  // Get episodes for calendar view with timezone support
+  // Get episodes for calendar view with comprehensive timezone support
   async getEpisodes(params = {}, options = {}) {
     try {
+      // Get facility timezone if facility_id is provided
+      let facilityTimezone = options.timezone;
+      if (!facilityTimezone && params.facility_id) {
+        facilityTimezone = await this.getFacilityTimezone(params.facility_id);
+      }
+
       const operation = () => api.get('/api/episodes', { 
         params: {
           ...params,
-          timezone: options.timezone // Pass client timezone preference
+          timezone: facilityTimezone // Pass facility timezone preference
         },
-        signal: options.signal // Support request cancellation
+        signal: options.signal, // Support request cancellation
+        headers: {
+          'X-Client-Timezone': options.clientTimezone || dateUtils.DEFAULT_TIMEZONE,
+          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
+        }
       });
       
       const response = await retryOperation(operation);
+      
+      // Process events for timezone display
+      const processedEvents = response.data.events?.map(event => {
+        return this.enhanceEventWithTimezone(event, facilityTimezone);
+      }) || [];
+
       return { 
         success: true, 
         data: {
           ...response.data,
-          facilityTimezone: response.data.timezone // Server returns facility timezone
+          events: processedEvents,
+          facilityTimezone: response.data.timezone || facilityTimezone // Server returns facility timezone
         }
       };
     } catch (error) {
@@ -75,12 +95,66 @@ const calendarService = {
     }
   },
 
-  // Get calendar resources (facilities and rinks)
+  // Enhance event with timezone information
+  enhanceEventWithTimezone(event, facilityTimezone) {
+    if (!event || !facilityTimezone) return event;
+
+    try {
+      return {
+        ...event,
+        extendedProps: {
+          ...event.extendedProps,
+          facilityTimezone,
+          displayStartTime: dateUtils.formatTimeOnly(event.start, facilityTimezone),
+          displayEndTime: dateUtils.formatTimeOnly(event.end, facilityTimezone),
+          displayDate: dateUtils.formatDateOnly(event.start, facilityTimezone),
+          displayDuration: dateUtils.formatDuration(
+            dateUtils.getDuration(event.start, event.end)
+          ),
+          timezoneDisplay: dateUtils.getTimezoneDisplayName(facilityTimezone),
+          // Enhanced timezone validation
+          isWithinBusinessHours: this.validateBusinessHours(
+            event.start, 
+            event.end, 
+            event.extendedProps.facility,
+            facilityTimezone
+          ),
+          dstInfo: this.getDSTInfo(event.start, facilityTimezone)
+        }
+      };
+    } catch (error) {
+      console.error('Enhance event with timezone failed:', error);
+      return event;
+    }
+  },
+
+  // Get calendar resources (facilities and rinks) with timezone info
   async getCalendarResources(params = {}) {
     try {
       const operation = () => api.get('/api/episodes/resources', { params });
       const response = await retryOperation(operation);
-      return { success: true, data: response.data };
+      
+      // Enhance resources with timezone information
+      const enhancedResources = response.data.resources?.map(resource => ({
+        ...resource,
+        timezoneInfo: {
+          timezone: resource.facilityTimezone,
+          displayName: dateUtils.getTimezoneDisplayName(resource.facilityTimezone),
+          currentTime: dateUtils.formatForDisplay(
+            new Date(), 
+            resource.facilityTimezone,
+            { hour: 'numeric', minute: '2-digit', hour12: true }
+          )
+        }
+      })) || [];
+
+      return { 
+        success: true, 
+        data: {
+          ...response.data,
+          resources: enhancedResources
+        }
+      };
     } catch (error) {
       console.error('Get calendar resources error:', error);
       return {
@@ -94,9 +168,31 @@ const calendarService = {
   async getEpisodeById(id, timezone = null) {
     try {
       const operation = () => api.get(`/api/episodes/${id}`, { 
-        params: { timezone } 
+        params: { timezone },
+        headers: {
+          'X-Client-Timezone': timezone || dateUtils.DEFAULT_TIMEZONE
+        }
       });
       const response = await retryOperation(operation);
+      
+      // Enhance episode with timezone information
+      const episode = response.data.episode;
+      if (episode && timezone) {
+        episode.timezoneInfo = {
+          facilityTimezone: timezone,
+          displayStartTime: dateUtils.formatForDisplay(episode.episode_start_date_time, timezone),
+          displayEndTime: dateUtils.formatForDisplay(episode.episode_end_date_time, timezone),
+          duration: dateUtils.formatDuration(episode.episode_duration),
+          relativeTime: dateUtils.getRelativeTime(episode.episode_start_date_time, timezone),
+          businessHoursStatus: this.validateBusinessHours(
+            episode.episode_start_date_time,
+            episode.episode_end_date_time,
+            episode.event?.resource?.facility,
+            timezone
+          )
+        };
+      }
+
       return { success: true, data: response.data };
     } catch (error) {
       console.error('Get episode error:', error);
@@ -107,17 +203,34 @@ const calendarService = {
     }
   },
 
-  // Validate episode move/resize with timezone conversion
+  // Validate episode move/resize with comprehensive timezone conversion
   async validateEpisodeMove(episodeId, newStartTime, newEndTime, facilityId, facilityTimezone = null) {
     try {
-      // Convert times to facility timezone if needed
+      // Get facility timezone if not provided
+      if (!facilityTimezone && facilityId) {
+        facilityTimezone = await this.getFacilityTimezone(facilityId);
+      }
+
+      // Convert times to facility timezone for proper validation
       let convertedStartTime = newStartTime;
       let convertedEndTime = newEndTime;
       
       if (facilityTimezone) {
-        // If we have a specific facility timezone, ensure times are converted properly
-        convertedStartTime = dateUtils.convertToUTC(new Date(newStartTime), facilityTimezone);
-        convertedEndTime = dateUtils.convertToUTC(new Date(newEndTime), facilityTimezone);
+        // Ensure times are in the correct timezone context
+        convertedStartTime = dateUtils.formatForAPI(
+          dateUtils.createFacilityDateTime(
+            dateUtils.extractDateString(newStartTime, facilityTimezone),
+            dateUtils.extractTimeString(newStartTime, facilityTimezone),
+            facilityTimezone
+          )
+        );
+        convertedEndTime = dateUtils.formatForAPI(
+          dateUtils.createFacilityDateTime(
+            dateUtils.extractDateString(newEndTime, facilityTimezone),
+            dateUtils.extractTimeString(newEndTime, facilityTimezone),
+            facilityTimezone
+          )
+        );
       }
 
       const response = await api.post('/api/episodes/validate-move', {
@@ -125,15 +238,20 @@ const calendarService = {
         new_start_time: convertedStartTime,
         new_end_time: convertedEndTime,
         facility_id: facilityId
+      }, {
+        headers: {
+          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
+        }
       });
       
       return { 
         success: true, 
         data: {
           isValid: response.data.valid,
-          conflicts: response.data.conflicts || [],
-          warnings: response.data.warnings || [],
-          businessRuleViolations: response.data.businessRuleViolations || []
+          conflicts: this.enhanceConflictsWithTimezone(response.data.conflicts || [], facilityTimezone),
+          warnings: this.enhanceWarningsWithTimezone(response.data.warnings || [], facilityTimezone),
+          businessRuleViolations: response.data.businessRuleViolations || [],
+          facilityTimezone
         }
       };
     } catch (error) {
@@ -145,7 +263,37 @@ const calendarService = {
     }
   },
 
-  // Move episode with drag and drop and timezone support
+  // Enhance conflicts with timezone information
+  enhanceConflictsWithTimezone(conflicts, facilityTimezone) {
+    if (!facilityTimezone) return conflicts;
+
+    return conflicts.map(conflict => ({
+      ...conflict,
+      displayTime: conflict.time ? dateUtils.formatForDisplay(
+        conflict.time,
+        facilityTimezone,
+        { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }
+      ) : null,
+      timezoneContext: dateUtils.getTimezoneDisplayName(facilityTimezone)
+    }));
+  },
+
+  // Enhance warnings with timezone information
+  enhanceWarningsWithTimezone(warnings, facilityTimezone) {
+    if (!facilityTimezone) return warnings;
+
+    return warnings.map(warning => ({
+      ...warning,
+      displayTime: warning.time ? dateUtils.formatForDisplay(
+        warning.time,
+        facilityTimezone,
+        { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }
+      ) : null,
+      timezoneContext: dateUtils.getTimezoneDisplayName(facilityTimezone)
+    }));
+  },
+
+  // Move episode with drag and drop and comprehensive timezone support
   async moveEpisode(episodeId, newStartTime, newEndTime, facilityTimezone = null) {
     try {
       // Convert times if facility timezone is provided
@@ -153,17 +301,46 @@ const calendarService = {
       let convertedEndTime = newEndTime;
       
       if (facilityTimezone) {
-        convertedStartTime = dateUtils.convertToUTC(new Date(newStartTime), facilityTimezone);
-        convertedEndTime = dateUtils.convertToUTC(new Date(newEndTime), facilityTimezone);
+        convertedStartTime = dateUtils.formatForAPI(
+          dateUtils.createFacilityDateTime(
+            dateUtils.extractDateString(newStartTime, facilityTimezone),
+            dateUtils.extractTimeString(newStartTime, facilityTimezone),
+            facilityTimezone
+          )
+        );
+        convertedEndTime = dateUtils.formatForAPI(
+          dateUtils.createFacilityDateTime(
+            dateUtils.extractDateString(newEndTime, facilityTimezone),
+            dateUtils.extractTimeString(newEndTime, facilityTimezone),
+            facilityTimezone
+          )
+        );
       }
 
-      // Calculate new duration
-      const duration = Math.round((new Date(convertedEndTime) - new Date(convertedStartTime)) / (1000 * 60));
+      // Calculate new duration with DST awareness
+      const duration = facilityTimezone ? 
+        dateUtils.getDuration(
+          dateUtils.createFacilityDateTime(
+            dateUtils.extractDateString(convertedStartTime, facilityTimezone),
+            dateUtils.extractTimeString(convertedStartTime, facilityTimezone),
+            facilityTimezone
+          ),
+          dateUtils.createFacilityDateTime(
+            dateUtils.extractDateString(convertedEndTime, facilityTimezone),
+            dateUtils.extractTimeString(convertedEndTime, facilityTimezone),
+            facilityTimezone
+          )
+        ) :
+        Math.round((new Date(convertedEndTime) - new Date(convertedStartTime)) / (1000 * 60));
 
       const response = await api.put(`/api/episodes/${episodeId}/move`, {
         new_start_time: convertedStartTime,
         new_end_time: convertedEndTime,
         new_duration: duration
+      }, {
+        headers: {
+          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
+        }
       });
       
       return { success: true, data: response.data };
@@ -183,11 +360,21 @@ const calendarService = {
       let convertedEndTime = newEndTime;
       
       if (facilityTimezone) {
-        convertedEndTime = dateUtils.convertToUTC(new Date(newEndTime), facilityTimezone);
+        convertedEndTime = dateUtils.formatForAPI(
+          dateUtils.createFacilityDateTime(
+            dateUtils.extractDateString(newEndTime, facilityTimezone),
+            dateUtils.extractTimeString(newEndTime, facilityTimezone),
+            facilityTimezone
+          )
+        );
       }
 
       const response = await api.put(`/api/episodes/${episodeId}/resize`, {
         new_end_time: convertedEndTime
+      }, {
+        headers: {
+          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
+        }
       });
       
       return { success: true, data: response.data };
@@ -200,7 +387,7 @@ const calendarService = {
     }
   },
 
-  // Batch validate multiple moves
+  // Batch validate multiple moves with timezone support
   async validateBatchMoves(moves, facilityTimezone = null) {
     try {
       // Convert times for all moves if facility timezone is provided
@@ -208,8 +395,20 @@ const calendarService = {
         if (facilityTimezone) {
           return {
             ...move,
-            newStartTime: dateUtils.convertToUTC(new Date(move.newStartTime), facilityTimezone),
-            newEndTime: dateUtils.convertToUTC(new Date(move.newEndTime), facilityTimezone)
+            newStartTime: dateUtils.formatForAPI(
+              dateUtils.createFacilityDateTime(
+                dateUtils.extractDateString(move.newStartTime, facilityTimezone),
+                dateUtils.extractTimeString(move.newStartTime, facilityTimezone),
+                facilityTimezone
+              )
+            ),
+            newEndTime: dateUtils.formatForAPI(
+              dateUtils.createFacilityDateTime(
+                dateUtils.extractDateString(move.newEndTime, facilityTimezone),
+                dateUtils.extractTimeString(move.newEndTime, facilityTimezone),
+                facilityTimezone
+              )
+            )
           };
         }
         return move;
@@ -223,14 +422,25 @@ const calendarService = {
           resource_id: move.resourceId,
           facility_id: move.facilityId
         }))
+      }, {
+        headers: {
+          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
+        }
       });
 
       return { 
         success: true, 
         data: {
           isValid: response.data.valid,
-          results: response.data.results || [],
-          overallConflicts: response.data.overallConflicts || []
+          results: response.data.results?.map(result => ({
+            ...result,
+            conflicts: this.enhanceConflictsWithTimezone(result.conflicts || [], facilityTimezone),
+            warnings: this.enhanceWarningsWithTimezone(result.warnings || [], facilityTimezone)
+          })) || [],
+          overallConflicts: this.enhanceConflictsWithTimezone(
+            response.data.overallConflicts || [], 
+            facilityTimezone
+          )
         }
       };
     } catch (error) {
@@ -242,7 +452,7 @@ const calendarService = {
     }
   },
 
-  // Create new episode (Admin only) with timezone support
+  // Create new episode (Admin only) with comprehensive timezone support
   async createEpisode(episodeData, facilityTimezone = null) {
     try {
       // Validate required fields
@@ -257,18 +467,28 @@ const calendarService = {
       let convertedData = { ...episodeData };
       
       if (facilityTimezone) {
-        convertedData.episode_start_date_time = dateUtils.convertToUTC(
-          new Date(episodeData.episode_start_date_time), 
-          facilityTimezone
+        convertedData.episode_start_date_time = dateUtils.formatForAPI(
+          dateUtils.createFacilityDateTime(
+            dateUtils.extractDateString(episodeData.episode_start_date_time, facilityTimezone),
+            dateUtils.extractTimeString(episodeData.episode_start_date_time, facilityTimezone),
+            facilityTimezone
+          )
         );
-        convertedData.episode_end_date_time = dateUtils.convertToUTC(
-          new Date(episodeData.episode_end_date_time), 
-          facilityTimezone
+        convertedData.episode_end_date_time = dateUtils.formatForAPI(
+          dateUtils.createFacilityDateTime(
+            dateUtils.extractDateString(episodeData.episode_end_date_time, facilityTimezone),
+            dateUtils.extractTimeString(episodeData.episode_end_date_time, facilityTimezone),
+            facilityTimezone
+          )
         );
         convertedData.facility_timezone = facilityTimezone;
       }
       
-      const response = await api.post('/api/episodes', convertedData);
+      const response = await api.post('/api/episodes', convertedData, {
+        headers: {
+          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
+        }
+      });
       return { success: true, data: response.data };
     } catch (error) {
       console.error('Create episode error:', error);
@@ -287,15 +507,21 @@ const calendarService = {
       
       if (facilityTimezone) {
         if (episodeData.episode_start_date_time) {
-          convertedData.episode_start_date_time = dateUtils.convertToUTC(
-            new Date(episodeData.episode_start_date_time), 
-            facilityTimezone
+          convertedData.episode_start_date_time = dateUtils.formatForAPI(
+            dateUtils.createFacilityDateTime(
+              dateUtils.extractDateString(episodeData.episode_start_date_time, facilityTimezone),
+              dateUtils.extractTimeString(episodeData.episode_start_date_time, facilityTimezone),
+              facilityTimezone
+            )
           );
         }
         if (episodeData.episode_end_date_time) {
-          convertedData.episode_end_date_time = dateUtils.convertToUTC(
-            new Date(episodeData.episode_end_date_time), 
-            facilityTimezone
+          convertedData.episode_end_date_time = dateUtils.formatForAPI(
+            dateUtils.createFacilityDateTime(
+              dateUtils.extractDateString(episodeData.episode_end_date_time, facilityTimezone),
+              dateUtils.extractTimeString(episodeData.episode_end_date_time, facilityTimezone),
+              facilityTimezone
+            )
           );
         }
       }
@@ -310,7 +536,11 @@ const calendarService = {
         episode_end_date_time: convertedData.episode_end_date_time
       };
       
-      const response = await api.put(`/api/episodes/${id}`, cleanData);
+      const response = await api.put(`/api/episodes/${id}`, cleanData, {
+        headers: {
+          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
+        }
+      });
       return { success: true, data: response.data };
     } catch (error) {
       console.error('Update episode error:', error);
@@ -344,7 +574,7 @@ const calendarService = {
     }
   },
 
-  // Create new event with episodes (Admin only) with timezone support
+  // Create new event with episodes (Admin only) with comprehensive timezone support
   async createEvent(eventData, facilityTimezone = null) {
     try {
       // Validate required fields
@@ -359,20 +589,38 @@ const calendarService = {
       let convertedData = { ...eventData };
       
       if (facilityTimezone) {
-        convertedData.event_start_date_time = dateUtils.createFacilityDateTime(
-          eventData.event_date || eventData.event_start_date_time.split('T')[0],
-          eventData.start_time || eventData.event_start_date_time.split('T')[1].slice(0, 5),
-          facilityTimezone
-        );
-        convertedData.event_end_date_time = dateUtils.createFacilityDateTime(
-          eventData.event_date || eventData.event_end_date_time.split('T')[0],
-          eventData.end_time || eventData.event_end_date_time.split('T')[1].slice(0, 5),
-          facilityTimezone
-        );
+        // Handle different input formats
+        if (eventData.event_date && eventData.start_time) {
+          // Form input format
+          convertedData.event_start_date_time = dateUtils.formatForAPI(
+            dateUtils.createFacilityDateTime(eventData.event_date, eventData.start_time, facilityTimezone)
+          );
+          convertedData.event_end_date_time = dateUtils.formatForAPI(
+            dateUtils.createFacilityDateTime(eventData.event_date, eventData.end_time, facilityTimezone)
+          );
+        } else {
+          // Direct datetime format
+          convertedData.event_start_date_time = dateUtils.formatForAPI(
+            dateUtils.createFacilityDateTime(
+              dateUtils.extractDateString(eventData.event_start_date_time, facilityTimezone),
+              dateUtils.extractTimeString(eventData.event_start_date_time, facilityTimezone),
+              facilityTimezone
+            )
+          );
+          convertedData.event_end_date_time = dateUtils.formatForAPI(
+            dateUtils.createFacilityDateTime(
+              dateUtils.extractDateString(eventData.event_end_date_time, facilityTimezone),
+              dateUtils.extractTimeString(eventData.event_end_date_time, facilityTimezone),
+              facilityTimezone
+            )
+          );
+        }
         
         if (eventData.repeat_end_date) {
           convertedData.repeat_end_date = eventData.repeat_end_date;
         }
+
+        convertedData.facility_timezone = facilityTimezone;
       }
       
       // Validate dates
@@ -387,7 +635,7 @@ const calendarService = {
       }
       
       if (convertedData.repeat_mode !== 'once' && convertedData.repeat_end_date) {
-        const repeatEnd = new Date(convertedData.repeat_end_date);
+        const repeatEnd = new Date(convertedData.repeat_end_date + 'T23:59:59');
         if (repeatEnd <= startDate) {
           return { 
             success: false, 
@@ -396,7 +644,11 @@ const calendarService = {
         }
       }
       
-      const response = await api.post('/api/events', convertedData);
+      const response = await api.post('/api/events', convertedData, {
+        headers: {
+          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
+        }
+      });
       return { success: true, data: response.data };
     } catch (error) {
       console.error('Create event error:', error);
@@ -458,31 +710,32 @@ const calendarService = {
 
     switch (view) {
       case 'month':
-        start.setDate(1);
-        start.setHours(0, 0, 0, 0);
-        end.setMonth(end.getMonth() + 1);
-        end.setDate(0);
-        end.setHours(23, 59, 59, 999);
-        break;
+        const startOfMonth = dateUtils.getStartOfMonth(start, facilityTimezone);
+        const endOfMonth = dateUtils.getEndOfMonth(start, facilityTimezone);
+        return {
+          start: dateUtils.formatForAPI(startOfMonth),
+          end: dateUtils.formatForAPI(endOfMonth)
+        };
       case 'week':
-        const day = start.getDay();
-        start.setDate(start.getDate() - day);
-        start.setHours(0, 0, 0, 0);
-        end.setDate(end.getDate() + (6 - day));
-        end.setHours(23, 59, 59, 999);
-        break;
+        const startOfWeek = dateUtils.getStartOfWeek(start, facilityTimezone);
+        const endOfWeek = dateUtils.getEndOfWeek(start, facilityTimezone);
+        return {
+          start: dateUtils.formatForAPI(startOfWeek),
+          end: dateUtils.formatForAPI(endOfWeek)
+        };
       case 'day':
-        start.setHours(0, 0, 0, 0);
-        end.setHours(23, 59, 59, 999);
-        break;
+        const startOfDay = dateUtils.getStartOfDay(start, facilityTimezone);
+        const endOfDay = dateUtils.getEndOfDay(start, facilityTimezone);
+        return {
+          start: dateUtils.formatForAPI(startOfDay),
+          end: dateUtils.formatForAPI(endOfDay)
+        };
       default:
-        break;
+        return {
+          start: dateUtils.formatForAPI(start),
+          end: dateUtils.formatForAPI(end)
+        };
     }
-
-    return {
-      start: dateUtils.convertToUTC(start, facilityTimezone).toISOString(),
-      end: dateUtils.convertToUTC(end, facilityTimezone).toISOString()
-    };
   },
 
   // Get status color mapping
@@ -505,7 +758,7 @@ const calendarService = {
     return this.getStatusColorMap()[episode.status] || '#FFFFFF';
   },
 
-  // Check if episode can be moved/resized
+  // Check if episode can be moved/resized with timezone awareness
   canEditEpisode(episode) {
     if (!episode) return { allowed: false, reason: 'Episode not found' };
     
@@ -563,6 +816,53 @@ const calendarService = {
     return errors;
   },
 
+  // Validate business hours with facility context
+  validateBusinessHours(startTime, endTime, facility, facilityTimezone) {
+    if (!facility || !facilityTimezone) return { isValid: true };
+
+    try {
+      const businessStart = facility.facility_daily_start_time || '06:00:00';
+      const businessEnd = facility.facility_daily_end_time || '23:00:00';
+
+      const startTimeStr = dateUtils.extractTimeString(startTime, facilityTimezone);
+      const endTimeStr = dateUtils.extractTimeString(endTime, facilityTimezone);
+
+      const isValid = startTimeStr >= businessStart.slice(0, 5) && 
+                     endTimeStr <= businessEnd.slice(0, 5);
+
+      return {
+        isValid,
+        businessHours: {
+          start: businessStart.slice(0, 5),
+          end: businessEnd.slice(0, 5)
+        },
+        requestedTime: {
+          start: startTimeStr,
+          end: endTimeStr
+        },
+        timezone: facilityTimezone
+      };
+    } catch (error) {
+      console.error('Business hours validation failed:', error);
+      return { isValid: true };
+    }
+  },
+
+  // Get DST information for an event
+  getDSTInfo(eventTime, facilityTimezone) {
+    try {
+      const facilityTime = dateUtils.convertToFacilityTime(eventTime, facilityTimezone);
+      return {
+        isDST: facilityTime.isDST ? facilityTime.isDST() : false,
+        offset: facilityTime.format ? facilityTime.format('Z') : '+00:00',
+        zoneName: facilityTime.format ? facilityTime.format('z') : 'UTC'
+      };
+    } catch (error) {
+      console.error('Get DST info failed:', error);
+      return { isDST: false, offset: '+00:00', zoneName: 'UTC' };
+    }
+  },
+
   // Check if episode can be deleted
   canDeleteEpisode(episode) {
     if (!episode) return false;
@@ -589,18 +889,7 @@ const calendarService = {
   isWithinBusinessHours(startTime, endTime, facilitySchedule, facilityTimezone = dateUtils.DEFAULT_TIMEZONE) {
     if (!facilitySchedule) return true;
     
-    const facilityStartTime = dateUtils.convertToFacilityTime(startTime, facilityTimezone);
-    const facilityEndTime = dateUtils.convertToFacilityTime(endTime, facilityTimezone);
-    
-    const dayOfWeek = facilityStartTime.getDay();
-    const daySchedule = facilitySchedule[dayOfWeek];
-    
-    if (!daySchedule || daySchedule.isClosed) return false;
-    
-    const startHour = facilityStartTime.getHours() + facilityStartTime.getMinutes() / 60;
-    const endHour = facilityEndTime.getHours() + facilityEndTime.getMinutes() / 60;
-    
-    return startHour >= daySchedule.openHour && endHour <= daySchedule.closeHour;
+    return dateUtils.isWithinBusinessHours(startTime, endTime, facilitySchedule, facilityTimezone);
   },
 
   // Get conflict types for display
@@ -657,14 +946,46 @@ const calendarService = {
     };
   },
 
-  // Get timezone information for a facility
+  // Get timezone information for a facility with caching
   async getFacilityTimezone(facilityId) {
     try {
+      // Check cache first
+      if (facilityTimezoneCache.has(facilityId)) {
+        return facilityTimezoneCache.get(facilityId);
+      }
+
       const response = await api.get(`/api/facilities/${facilityId}`);
-      return response.data.facility?.facility_time_zone || dateUtils.DEFAULT_TIMEZONE;
+      const timezone = response.data.facility?.facility_time_zone || dateUtils.DEFAULT_TIMEZONE;
+      
+      // Cache the result
+      facilityTimezoneCache.set(facilityId, timezone);
+      
+      return timezone;
     } catch (error) {
       console.error('Get facility timezone error:', error);
       return dateUtils.DEFAULT_TIMEZONE;
+    }
+  },
+
+  // Clear facility timezone cache
+  clearTimezoneCache() {
+    facilityTimezoneCache.clear();
+  },
+
+  // Preload facility timezones for better performance
+  async preloadFacilityTimezones(facilityIds) {
+    try {
+      const promises = facilityIds.map(async (facilityId) => {
+        if (!facilityTimezoneCache.has(facilityId)) {
+          const timezone = await this.getFacilityTimezone(facilityId);
+          return { facilityId, timezone };
+        }
+        return null;
+      });
+
+      await Promise.all(promises);
+    } catch (error) {
+      console.error('Preload facility timezones error:', error);
     }
   }
 };

@@ -1,3 +1,5 @@
+/* frontend/src/components/calendar/CreateEventModal/CreateEventModal.css (Enhanced with Timezone) */
+
 .create-event-modal {
   max-width: 700px;
   width: 100%;
@@ -27,6 +29,151 @@
   color: #2d3748;
 }
 
+/* Timezone Information Panel */
+.timezone-info-panel {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 24px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.timezone-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.timezone-icon {
+  font-size: 20px;
+}
+
+.timezone-details {
+  flex: 1;
+}
+
+.timezone-name {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.timezone-current {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.business-hours {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.business-hours-label {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.business-hours-time {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Time Preview */
+.time-preview {
+  background: #f7fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.preview-icon {
+  font-size: 16px;
+}
+
+.preview-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #4a5568;
+}
+
+.preview-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.preview-time {
+  font-size: 16px;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.preview-duration {
+  font-size: 14px;
+  color: #718096;
+}
+
+.preview-warning {
+  font-size: 14px;
+  color: #e53e3e;
+  font-weight: 500;
+  margin-top: 8px;
+}
+
+/* Validation Panel */
+.validation-panel {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.validation-error,
+.validation-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.validation-error {
+  background: #fed7d7;
+  color: #c53030;
+  border: 1px solid #feb2b2;
+}
+
+.validation-warning {
+  background: #feebc8;
+  color: #c05621;
+  border: 1px solid #f6ad55;
+}
+
+.validation-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.validation-message {
+  flex: 1;
+  line-height: 1.4;
+}
+
+/* Form Layout */
 .form-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -141,6 +288,11 @@
   border-color: #cbd5e0;
 }
 
+.weekday-checkboxes .checkbox-label input[type="checkbox"]:checked + span {
+  color: #4299e1;
+  font-weight: 600;
+}
+
 .weekday-checkboxes .checkbox-label input[type="checkbox"] {
   margin-bottom: 4px;
 }
@@ -166,6 +318,53 @@
   font-size: 14px;
 }
 
+/* Button states with timezone awareness */
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn.btn-primary:disabled {
+  background-color: #a0aec0;
+  border-color: #a0aec0;
+}
+
+/* Enhanced time input styling */
+.form-group input[type="time"] {
+  position: relative;
+}
+
+.form-group input[type="time"]::-webkit-calendar-picker-indicator {
+  background: transparent;
+  bottom: 0;
+  color: transparent;
+  cursor: pointer;
+  height: auto;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: auto;
+}
+
+/* Date input enhancements */
+.form-group input[type="date"] {
+  position: relative;
+}
+
+.form-group input[type="date"]::-webkit-calendar-picker-indicator {
+  background: transparent;
+  bottom: 0;
+  color: transparent;
+  cursor: pointer;
+  height: auto;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: auto;
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
   .create-event-modal {
@@ -184,10 +383,107 @@
     padding: 16px;
     max-height: 60vh;
   }
+
+  .timezone-info-panel {
+    padding: 12px;
+  }
+
+  .timezone-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .business-hours {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .preview-details {
+    gap: 8px;
+  }
+
+  .validation-error,
+  .validation-warning {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
 }
 
 @media (max-width: 480px) {
   .weekday-checkboxes {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .timezone-name {
+    font-size: 14px;
+  }
+
+  .timezone-current {
+    font-size: 12px;
+  }
+
+  .preview-time {
+    font-size: 14px;
+  }
+}
+
+/* Animation for timezone panel */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.timezone-info-panel {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Focus states for better accessibility */
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  outline: 2px solid #4299e1;
+  outline-offset: -2px;
+}
+
+.checkbox-label:focus-within {
+  outline: 2px solid #4299e1;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .timezone-info-panel {
+    border: 2px solid #000;
+  }
+  
+  .validation-error {
+    border: 2px solid #c53030;
+  }
+  
+  .validation-warning {
+    border: 2px solid #c05621;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .timezone-info-panel {
+    animation: none;
+  }
+  
+  .form-group input,
+  .form-group textarea,
+  .form-group select {
+    transition: none;
   }
 }

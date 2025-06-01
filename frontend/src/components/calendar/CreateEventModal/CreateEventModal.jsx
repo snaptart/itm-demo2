@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+// frontend/src/components/calendar/CreateEventModal/CreateEventModal.jsx (Enhanced with Timezone)
+import React, { useState, useEffect, useMemo } from 'react';
+import { dateUtils } from '../../../utils/dateUtils';
 import './CreateEventModal.css';
 
 function CreateEventModal({ 
@@ -14,15 +16,20 @@ function CreateEventModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [resources, setResources] = useState([]);
+  const [timezoneInfo, setTimezoneInfo] = useState(null);
+  const [businessHoursValidation, setBusinessHoursValidation] = useState(null);
   
   // Safety check for required props
   if (!isOpen || !facility) {
     return null;
   }
   
+  // Determine facility timezone
+  const facilityTimezone = facility.facility_time_zone || dateUtils.DEFAULT_TIMEZONE;
+  
   const [formData, setFormData] = useState({
     resource_id: selectedResource || '',
-    event_date: selectedDate ? selectedDate.toISOString().split('T')[0] : '',
+    event_date: selectedDate ? dateUtils.extractDateString(selectedDate, facilityTimezone) : '',
     start_time: '08:00',
     end_time: '09:00',
     episode_duration: 60,
@@ -35,9 +42,54 @@ function CreateEventModal({
     generate_episodes: true
   });
 
+  // Computed values with timezone awareness
+  const computedValues = useMemo(() => {
+    if (!formData.event_date || !formData.start_time || !formData.end_time) {
+      return null;
+    }
+
+    const startDateTime = dateUtils.createFacilityDateTime(
+      formData.event_date, 
+      formData.start_time, 
+      facilityTimezone
+    );
+    const endDateTime = dateUtils.createFacilityDateTime(
+      formData.event_date, 
+      formData.end_time, 
+      facilityTimezone
+    );
+
+    if (!startDateTime || !endDateTime) {
+      return null;
+    }
+
+    const duration = dateUtils.getDuration(startDateTime, endDateTime);
+    const isValidRange = endDateTime > startDateTime;
+    const isPast = dateUtils.isPast(startDateTime, facilityTimezone);
+    
+    return {
+      startDateTime,
+      endDateTime,
+      duration,
+      isValidRange,
+      isPast,
+      displayStart: dateUtils.formatForDisplay(startDateTime, facilityTimezone, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      }),
+      displayEnd: dateUtils.formatTimeOnly(endDateTime, facilityTimezone),
+      timezoneDisplay: dateUtils.getTimezoneDisplayName(facilityTimezone)
+    };
+  }, [formData.event_date, formData.start_time, formData.end_time, facilityTimezone]);
+
   useEffect(() => {
     if (facility && isOpen) {
       loadResources();
+      loadTimezoneInfo();
     }
   }, [facility, isOpen]);
 
@@ -45,10 +97,10 @@ function CreateEventModal({
     if (selectedDate) {
       setFormData(prev => ({
         ...prev,
-        event_date: selectedDate.toISOString().split('T')[0]
+        event_date: dateUtils.extractDateString(selectedDate, facilityTimezone)
       }));
     }
-  }, [selectedDate]);
+  }, [selectedDate, facilityTimezone]);
 
   useEffect(() => {
     if (selectedResource) {
@@ -58,6 +110,13 @@ function CreateEventModal({
       }));
     }
   }, [selectedResource]);
+
+  // Validate business hours when time changes
+  useEffect(() => {
+    if (computedValues?.startDateTime && computedValues?.endDateTime) {
+      validateBusinessHours();
+    }
+  }, [computedValues, facility]);
 
   const loadResources = async () => {
     if (!resourceService) {
@@ -81,6 +140,78 @@ function CreateEventModal({
     } catch (err) {
       console.error('Failed to load resources:', err);
     }
+  };
+
+  const loadTimezoneInfo = () => {
+    try {
+      const info = {
+        timezone: facilityTimezone,
+        displayName: dateUtils.getTimezoneDisplayName(facilityTimezone),
+        currentTime: dateUtils.formatForDisplay(
+          new Date(), 
+          facilityTimezone, 
+          {
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true,
+            timeZoneName: 'short'
+          }
+        ),
+        businessHours: {
+          start: facility.facility_daily_start_time || '06:00:00',
+          end: facility.facility_daily_end_time || '23:00:00'
+        }
+      };
+      setTimezoneInfo(info);
+    } catch (error) {
+      console.error('Failed to load timezone info:', error);
+    }
+  };
+
+  const validateBusinessHours = () => {
+    if (!computedValues || !timezoneInfo) return;
+
+    const startTime = dateUtils.extractTimeString(computedValues.startDateTime, facilityTimezone);
+    const endTime = dateUtils.extractTimeString(computedValues.endDateTime, facilityTimezone);
+    const businessStart = timezoneInfo.businessHours.start.slice(0, 5); // HH:MM
+    const businessEnd = timezoneInfo.businessHours.end.slice(0, 5); // HH:MM
+
+    const violations = [];
+    const warnings = [];
+
+    // Check if times are within business hours
+    if (startTime < businessStart || endTime > businessEnd) {
+      violations.push({
+        type: 'business_hours',
+        message: `Times must be between ${businessStart} - ${businessEnd} (${timezoneInfo.displayName})`
+      });
+    }
+
+    // Check for unusual hours
+    const startHour = parseInt(startTime.split(':')[0]);
+    const endHour = parseInt(endTime.split(':')[0]);
+    
+    if (startHour < 6 || endHour > 22) {
+      warnings.push({
+        type: 'unusual_hours',
+        message: 'This is outside typical arena operating hours'
+      });
+    }
+
+    // Check if crossing midnight
+    if (endTime <= startTime) {
+      violations.push({
+        type: 'midnight_crossing',
+        message: 'End time must be after start time on the same day'
+      });
+    }
+
+    setBusinessHoursValidation({
+      violations,
+      warnings,
+      isValid: violations.length === 0
+    });
   };
 
   const handleInputChange = (e) => {
@@ -107,6 +238,9 @@ function CreateEventModal({
         [name]: value
       }));
     }
+    
+    // Clear error when user makes changes
+    if (error) setError('');
   };
 
   const validateForm = () => {
@@ -124,12 +258,19 @@ function CreateEventModal({
       setError('Please select start and end times');
       return false;
     }
-    
-    const start = new Date(`${formData.event_date}T${formData.start_time}`);
-    const end = new Date(`${formData.event_date}T${formData.end_time}`);
-    
-    if (start >= end) {
+
+    if (!computedValues?.isValidRange) {
       setError('End time must be after start time');
+      return false;
+    }
+
+    if (computedValues?.isPast) {
+      setError('Cannot schedule ice time in the past');
+      return false;
+    }
+
+    if (businessHoursValidation && !businessHoursValidation.isValid) {
+      setError(businessHoursValidation.violations[0]?.message || 'Time validation failed');
       return false;
     }
     
@@ -144,8 +285,13 @@ function CreateEventModal({
         return false;
       }
       
-      const repeatEnd = new Date(formData.repeat_end_date);
-      if (repeatEnd <= start) {
+      const repeatEnd = dateUtils.createFacilityDateTime(
+        formData.repeat_end_date,
+        '23:59',
+        facilityTimezone
+      );
+      
+      if (repeatEnd <= computedValues.startDateTime) {
         setError('Repeat end date must be after the start date');
         return false;
       }
@@ -168,14 +314,15 @@ function CreateEventModal({
       setLoading(true);
       setError('');
       
-      // Prepare event data
+      // Prepare event data with timezone-aware conversion
       const eventData = {
         resource_id: parseInt(formData.resource_id),
-        event_start_date_time: `${formData.event_date}T${formData.start_time}:00`,
-        event_end_date_time: `${formData.event_date}T${formData.end_time}:00`,
+        event_start_date_time: dateUtils.formatForAPI(computedValues.startDateTime),
+        event_end_date_time: dateUtils.formatForAPI(computedValues.endDateTime),
         episode_duration: parseInt(formData.episode_duration),
         repeat_mode: formData.repeat_mode,
-        generate_episodes: formData.generate_episodes
+        generate_episodes: formData.generate_episodes,
+        facility_timezone: facilityTimezone
       };
       
       // Add recurring event data if applicable
@@ -188,14 +335,15 @@ function CreateEventModal({
       
       // Add episode data
       if (formData.generate_episodes) {
+        const selectedResourceData = resources.find(r => r.resource_id === parseInt(formData.resource_id));
         eventData.episode_data = {
-          episode_title: formData.episode_title || `Ice Time - ${resources.find(r => r.resource_id === parseInt(formData.resource_id))?.resource_name}`,
+          episode_title: formData.episode_title || `Ice Time - ${selectedResourceData?.resource_name}`,
           episode_description: formData.episode_description,
           episode_price: parseFloat(formData.episode_price)
         };
       }
       
-      const result = await calendarService.createEvent(eventData);
+      const result = await calendarService.createEvent(eventData, facilityTimezone);
       
       if (result.success) {
         onSuccess();
@@ -227,6 +375,7 @@ function CreateEventModal({
       generate_episodes: true
     });
     setError('');
+    setBusinessHoursValidation(null);
     onClose();
   };
 
@@ -253,6 +402,27 @@ function CreateEventModal({
 
         <div className="create-event-form">
           <div className="modal-body">
+            {/* Timezone Information Panel */}
+            {timezoneInfo && (
+              <div className="timezone-info-panel">
+                <div className="timezone-header">
+                  <span className="timezone-icon">🌍</span>
+                  <div className="timezone-details">
+                    <div className="timezone-name">{facility.facility_name}</div>
+                    <div className="timezone-current">
+                      {timezoneInfo.currentTime} ({timezoneInfo.displayName})
+                    </div>
+                  </div>
+                </div>
+                <div className="business-hours">
+                  <span className="business-hours-label">Business Hours:</span>
+                  <span className="business-hours-time">
+                    {timezoneInfo.businessHours.start.slice(0, 5)} - {timezoneInfo.businessHours.end.slice(0, 5)}
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="form-section">
               <h3>Basic Information</h3>
               
@@ -284,11 +454,12 @@ function CreateEventModal({
                     onChange={handleInputChange}
                     required
                     disabled={loading}
+                    min={dateUtils.extractDateString(new Date(), facilityTimezone)}
                   />
                 </div>
 
                 <div className="form-group">
-                  <label>Start Time *</label>
+                  <label>Start Time * ({timezoneInfo?.displayName})</label>
                   <input
                     type="time"
                     name="start_time"
@@ -300,7 +471,7 @@ function CreateEventModal({
                 </div>
 
                 <div className="form-group">
-                  <label>End Time *</label>
+                  <label>End Time * ({timezoneInfo?.displayName})</label>
                   <input
                     type="time"
                     name="end_time"
@@ -311,6 +482,45 @@ function CreateEventModal({
                   />
                 </div>
               </div>
+
+              {/* Time Preview */}
+              {computedValues && (
+                <div className="time-preview">
+                  <div className="preview-header">
+                    <span className="preview-icon">⏰</span>
+                    <span className="preview-label">Schedule Preview</span>
+                  </div>
+                  <div className="preview-details">
+                    <div className="preview-time">
+                      {computedValues.displayStart} - {computedValues.displayEnd}
+                    </div>
+                    <div className="preview-duration">
+                      Duration: {dateUtils.formatDuration(computedValues.duration)}
+                    </div>
+                    {computedValues.isPast && (
+                      <div className="preview-warning">⚠️ This time is in the past</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Business Hours Validation */}
+              {businessHoursValidation && (
+                <div className="validation-panel">
+                  {businessHoursValidation.violations.map((violation, index) => (
+                    <div key={index} className="validation-error">
+                      <span className="validation-icon">❌</span>
+                      <span className="validation-message">{violation.message}</span>
+                    </div>
+                  ))}
+                  {businessHoursValidation.warnings.map((warning, index) => (
+                    <div key={index} className="validation-warning">
+                      <span className="validation-icon">⚠️</span>
+                      <span className="validation-message">{warning.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <div className="form-row">
                 <div className="form-group">
@@ -452,7 +662,7 @@ function CreateEventModal({
               type="button"
               className="btn btn-primary" 
               onClick={handleSubmit}
-              disabled={loading}
+              disabled={loading || (businessHoursValidation && !businessHoursValidation.isValid)}
             >
               {loading ? 'Creating...' : 'Create Ice Time'}
             </button>
