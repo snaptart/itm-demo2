@@ -1,0 +1,30 @@
+backend/
+├── src/
+│   ├── config/
+│   │   ├── database.js      # PostgreSQL connection config
+│   │   ├── auth.js          # JWT configuration
+│   │   └── app.js           # Express app setup
+│   ├── models/              # ORM models matching DB schema
+│   │   ├── User.js
+│   │   ├── Facility.js
+│   │   ├── Resource.js
+│   │   ├── Episode.js
+│   │   ├── Booking.js
+│   │   └── index.js         # Model associations
+│   ├── controllers/         # Business logic
+│   │   ├── authController.js
+│   │   ├── facilityController.js
+│   │   ├── episodeController.js
+│   │   └── bookingController.js
+│   ├── routes/              # API endpoints
+│   │   ├── auth.js
+│   │   ├── facilities.js
+│   │   ├── episodes.js
+│   │   └── bookings.js
+│   ├── middleware/
+│   │   ├── auth.js          # JWT verification
+│   │   ├── rbac.js          # Role-based access control
+│   │   └── errorHandler.js
+│   └── services/            # Reusable business logic
+│       ├── notificationService.js
+│       └── scheduleService.js
