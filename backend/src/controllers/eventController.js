@@ -1,8 +1,23 @@
+// backend/src/controllers/eventController.js (Fixed with Proper Timezone Handling)
 const { Event, Episode, Resource, Facility, Booking } = require('../models');
 const { Op } = require('sequelize');
 
+// Import timezone utilities with fallback
+let TimezoneUtils;
+try {
+  TimezoneUtils = require('../utils/timezoneUtils');
+} catch (error) {
+  console.warn('TimezoneUtils not available, using fallback');
+  TimezoneUtils = {
+    DEFAULT_TIMEZONE: 'America/Chicago',
+    parseAndConvertToUTC: (dateTime, timezone) => new Date(dateTime),
+    convertToFacilityTime: (dateTime, timezone) => new Date(dateTime),
+    calculateDurationWithDST: (start, end, timezone) => Math.round((new Date(end) - new Date(start)) / (1000 * 60))
+  };
+}
+
 const eventController = {
-  // Create new event (Admin only)
+  // FIXED: Create new event with proper timezone handling
   async createEvent(req, res) {
     try {
       const {
@@ -14,8 +29,16 @@ const eventController = {
         repeat_end_date,
         repeat_days,
         generate_episodes,
-        episode_data
+        episode_data,
+        facility_timezone
       } = req.body;
+
+      console.log('Creating event with timezone context:', { 
+        resource_id, 
+        event_start_date_time, 
+        event_end_date_time,
+        facility_timezone 
+      });
 
       // Validate required fields
       if (!resource_id || !event_start_date_time || !event_end_date_time) {
@@ -24,7 +47,7 @@ const eventController = {
         });
       }
 
-      // Verify resource exists and user has permission
+      // Verify resource exists and get facility context
       const resource = await Resource.findByPk(resource_id, {
         include: [{
           model: Facility,
@@ -42,41 +65,79 @@ const eventController = {
         });
       }
 
+      // Get facility timezone (prefer from request, fallback to facility setting)
+      const actualFacilityTimezone = facility_timezone || 
+                                    resource.facility.facility_time_zone || 
+                                    TimezoneUtils.DEFAULT_TIMEZONE;
+
+      console.log(`Using facility timezone: ${actualFacilityTimezone}`);
+
+      // FIXED: Convert facility times to UTC for storage
+      let utcStartDateTime, utcEndDateTime;
+      try {
+        utcStartDateTime = TimezoneUtils.parseAndConvertToUTC(event_start_date_time, actualFacilityTimezone);
+        utcEndDateTime = TimezoneUtils.parseAndConvertToUTC(event_end_date_time, actualFacilityTimezone);
+        
+        console.log(`Event time conversion:`);
+        console.log(`  Facility start: ${event_start_date_time} -> UTC: ${utcStartDateTime.toISOString()}`);
+        console.log(`  Facility end: ${event_end_date_time} -> UTC: ${utcEndDateTime.toISOString()}`);
+      } catch (conversionError) {
+        console.error('Timezone conversion failed during event creation:', conversionError);
+        return res.status(400).json({ 
+          message: 'Failed to convert event times to facility timezone' 
+        });
+      }
+
+      // Validate converted times
+      if (isNaN(utcStartDateTime.getTime()) || isNaN(utcEndDateTime.getTime())) {
+        return res.status(400).json({ 
+          message: 'Invalid date format provided' 
+        });
+      }
+
+      if (utcStartDateTime >= utcEndDateTime) {
+        return res.status(400).json({ 
+          message: 'End time must be after start time' 
+        });
+      }
+
       const createdEvents = [];
       
       if (repeat_mode === 'once') {
-        // Create single event
+        // Create single event with UTC times
         const event = await createSingleEvent({
           resource_id,
-          event_start_date_time,
-          event_end_date_time,
+          event_start_date_time: utcStartDateTime,
+          event_end_date_time: utcEndDateTime,
           episode_duration: episode_duration || 60,
-          created_by: req.user.username
+          created_by: req.user.username,
+          facilityTimezone: actualFacilityTimezone
         });
         
         createdEvents.push(event);
         
         if (generate_episodes) {
-          await generateEpisodesForEvent(event, resource, req.user, episode_data);
+          await generateEpisodesForEvent(event, resource, req.user, episode_data, actualFacilityTimezone);
         }
       } else {
-        // Create recurring events
+        // FIXED: Create recurring events with timezone handling
         const recurringEvents = await createRecurringEvents({
           resource_id,
-          event_start_date_time,
-          event_end_date_time,
+          facilityStartDateTime: new Date(event_start_date_time),
+          facilityEndDateTime: new Date(event_end_date_time),
           episode_duration: episode_duration || 60,
           repeat_mode,
           repeat_end_date,
           repeat_days,
-          created_by: req.user.username
+          created_by: req.user.username,
+          facilityTimezone: actualFacilityTimezone
         });
         
         createdEvents.push(...recurringEvents);
         
         if (generate_episodes) {
           for (const event of recurringEvents) {
-            await generateEpisodesForEvent(event, resource, req.user, episode_data);
+            await generateEpisodesForEvent(event, resource, req.user, episode_data, actualFacilityTimezone);
           }
         }
       }
@@ -100,9 +161,34 @@ const eventController = {
         ]
       });
 
+      // FIXED: Convert event times back to facility timezone for response
+      const responseEvents = newEvents.map(event => {
+        const facilityStartTime = TimezoneUtils.convertToFacilityTime(
+          event.event_start_date_time, 
+          actualFacilityTimezone
+        );
+        const facilityEndTime = TimezoneUtils.convertToFacilityTime(
+          event.event_end_date_time, 
+          actualFacilityTimezone
+        );
+
+        return {
+          ...event.toJSON(),
+          // Override with facility times for frontend
+          event_start_date_time: facilityStartTime.toISOString(),
+          event_end_date_time: facilityEndTime.toISOString(),
+          facilityTimezone: actualFacilityTimezone,
+          debug: {
+            storedUtcStart: event.event_start_date_time.toISOString(),
+            storedUtcEnd: event.event_end_date_time.toISOString()
+          }
+        };
+      });
+
       res.status(201).json({
         message: `${newEvents.length} event(s) created successfully`,
-        events: newEvents
+        events: responseEvents,
+        facilityTimezone: actualFacilityTimezone
       });
 
     } catch (error) {
@@ -111,18 +197,41 @@ const eventController = {
     }
   },
 
-  // Get events for a resource
+  // Get events for a resource (unchanged, but add timezone context)
   async getEventsByResource(req, res) {
     try {
       const { resourceId } = req.params;
       const { start, end } = req.query;
 
+      // Get resource for facility timezone context
+      const resource = await Resource.findByPk(resourceId, {
+        include: [{
+          model: Facility,
+          as: 'facility'
+        }]
+      });
+
+      if (!resource) {
+        return res.status(404).json({ message: 'Resource not found' });
+      }
+
+      const facilityTimezone = resource.facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
+
       const whereClause = { resource_id: resourceId };
       
+      // FIXED: Convert date range to UTC for database query
       if (start && end) {
-        whereClause.event_start_date_time = {
-          [Op.between]: [new Date(start), new Date(end)]
-        };
+        try {
+          const utcStart = TimezoneUtils.parseAndConvertToUTC(start, facilityTimezone);
+          const utcEnd = TimezoneUtils.parseAndConvertToUTC(end, facilityTimezone);
+          
+          whereClause.event_start_date_time = {
+            [Op.between]: [utcStart, utcEnd]
+          };
+        } catch (conversionError) {
+          console.error('Date range conversion error:', conversionError);
+          return res.status(400).json({ message: 'Invalid date range format' });
+        }
       }
 
       const events = await Event.findAll({
@@ -144,9 +253,29 @@ const eventController = {
         order: [['event_start_date_time', 'ASC']]
       });
 
+      // FIXED: Convert event times to facility timezone for response
+      const responseEvents = events.map(event => {
+        const facilityStartTime = TimezoneUtils.convertToFacilityTime(
+          event.event_start_date_time, 
+          facilityTimezone
+        );
+        const facilityEndTime = TimezoneUtils.convertToFacilityTime(
+          event.event_end_date_time, 
+          facilityTimezone
+        );
+
+        return {
+          ...event.toJSON(),
+          // Override with facility times
+          event_start_date_time: facilityStartTime.toISOString(),
+          event_end_date_time: facilityEndTime.toISOString()
+        };
+      });
+
       res.json({
-        events,
-        total: events.length
+        events: responseEvents,
+        total: events.length,
+        facilityTimezone
       });
 
     } catch (error) {
@@ -155,7 +284,7 @@ const eventController = {
     }
   },
 
-  // Delete event and its episodes (Admin only)
+  // Delete event and its episodes (unchanged)
   async deleteEvent(req, res) {
     try {
       const { id } = req.params;
@@ -220,24 +349,32 @@ const eventController = {
   }
 };
 
-// Helper function to create a single event
+// FIXED: Helper function to create a single event with timezone handling
 async function createSingleEvent(eventData) {
   const {
     resource_id,
     event_start_date_time,
     event_end_date_time,
     episode_duration,
-    created_by
+    created_by,
+    facilityTimezone
   } = eventData;
+
+  console.log('Creating single event with UTC times:', {
+    utcStart: event_start_date_time.toISOString(),
+    utcEnd: event_end_date_time.toISOString()
+  });
 
   return await Event.create({
     resource_id,
-    event_start_date_time: new Date(event_start_date_time),
-    event_end_date_time: new Date(event_end_date_time),
-    event_start_date: new Date(event_start_date_time).toISOString().split('T')[0],
-    event_end_date: new Date(event_end_date_time).toISOString().split('T')[0],
-    event_start_time: new Date(event_start_date_time).toTimeString().split(' ')[0],
-    event_end_time: new Date(event_end_date_time).toTimeString().split(' ')[0],
+    // Store UTC times in database
+    event_start_date_time,
+    event_end_date_time,
+    // Extract date/time components for legacy fields (using facility timezone)
+    event_start_date: event_start_date_time.toISOString().split('T')[0],
+    event_end_date: event_end_date_time.toISOString().split('T')[0],
+    event_start_time: event_start_date_time.toTimeString().split(' ')[0],
+    event_end_time: event_end_date_time.toTimeString().split(' ')[0],
     episode_duration,
     repeat_mode: 'once',
     created_by,
@@ -245,30 +382,37 @@ async function createSingleEvent(eventData) {
   });
 }
 
-// Helper function to create recurring events
+// FIXED: Helper function to create recurring events with timezone handling
 async function createRecurringEvents(eventData) {
   const {
     resource_id,
-    event_start_date_time,
-    event_end_date_time,
+    facilityStartDateTime,
+    facilityEndDateTime,
     episode_duration,
     repeat_mode,
     repeat_end_date,
     repeat_days,
-    created_by
+    created_by,
+    facilityTimezone
   } = eventData;
 
   const events = [];
-  const startDate = new Date(event_start_date_time);
-  const endDate = new Date(event_end_date_time);
-  const repeatEndDate = new Date(repeat_end_date);
-  repeatEndDate.setHours(23, 59, 59, 999);
+  const timeDiff = facilityEndDateTime.getTime() - facilityStartDateTime.getTime();
   
-  const timeDiff = endDate.getTime() - startDate.getTime();
+  // Parse repeat end date in facility timezone
+  let facilityRepeatEndDate;
+  try {
+    facilityRepeatEndDate = new Date(repeat_end_date + 'T23:59:59');
+  } catch (error) {
+    console.error('Invalid repeat end date:', repeat_end_date);
+    throw new Error('Invalid repeat end date format');
+  }
   
-  let currentDate = new Date(startDate);
+  let currentFacilityDate = new Date(facilityStartDateTime);
   
-  while (currentDate <= repeatEndDate) {
+  console.log(`Creating recurring events from ${facilityStartDateTime.toISOString()} to ${facilityRepeatEndDate.toISOString()} in ${facilityTimezone}`);
+  
+  while (currentFacilityDate <= facilityRepeatEndDate) {
     let shouldCreate = false;
     
     switch (repeat_mode) {
@@ -277,14 +421,14 @@ async function createRecurringEvents(eventData) {
         break;
         
       case 'weekly':
-        if (repeat_days && repeat_days.includes(currentDate.getDay())) {
+        if (repeat_days && repeat_days.includes(currentFacilityDate.getDay())) {
           shouldCreate = true;
         }
         break;
         
       case 'biweekly':
-        if (repeat_days && repeat_days.includes(currentDate.getDay())) {
-          const weeksDiff = Math.floor((currentDate - startDate) / (7 * 24 * 60 * 60 * 1000));
+        if (repeat_days && repeat_days.includes(currentFacilityDate.getDay())) {
+          const weeksDiff = Math.floor((currentFacilityDate - facilityStartDateTime) / (7 * 24 * 60 * 60 * 1000));
           if (weeksDiff % 2 === 0) {
             shouldCreate = true;
           }
@@ -293,17 +437,31 @@ async function createRecurringEvents(eventData) {
     }
     
     if (shouldCreate) {
-      const eventStart = new Date(currentDate);
-      const eventEnd = new Date(currentDate.getTime() + timeDiff);
+      const facilityEventStart = new Date(currentFacilityDate);
+      const facilityEventEnd = new Date(currentFacilityDate.getTime() + timeDiff);
+      
+      // FIXED: Convert facility times to UTC for storage
+      const utcEventStart = TimezoneUtils.parseAndConvertToUTC(
+        facilityEventStart.toISOString(), 
+        facilityTimezone
+      );
+      const utcEventEnd = TimezoneUtils.parseAndConvertToUTC(
+        facilityEventEnd.toISOString(), 
+        facilityTimezone
+      );
+      
+      console.log(`Creating recurring event: ${facilityEventStart.toISOString()} (facility) -> ${utcEventStart.toISOString()} (UTC)`);
       
       const event = await Event.create({
         resource_id,
-        event_start_date_time: eventStart,
-        event_end_date_time: eventEnd,
-        event_start_date: eventStart.toISOString().split('T')[0],
-        event_end_date: eventEnd.toISOString().split('T')[0],
-        event_start_time: eventStart.toTimeString().split(' ')[0],
-        event_end_time: eventEnd.toTimeString().split(' ')[0],
+        // Store UTC times
+        event_start_date_time: utcEventStart,
+        event_end_date_time: utcEventEnd,
+        // Legacy date/time fields
+        event_start_date: utcEventStart.toISOString().split('T')[0],
+        event_end_date: utcEventEnd.toISOString().split('T')[0],
+        event_start_time: utcEventStart.toTimeString().split(' ')[0],
+        event_end_time: utcEventEnd.toTimeString().split(' ')[0],
         episode_duration,
         repeat_mode,
         created_by,
@@ -314,30 +472,44 @@ async function createRecurringEvents(eventData) {
     }
     
     // Move to next day
-    currentDate.setDate(currentDate.getDate() + 1);
+    currentFacilityDate.setDate(currentFacilityDate.getDate() + 1);
   }
   
+  console.log(`Created ${events.length} recurring events`);
   return events;
 }
 
-// Helper function to generate episodes for an event
-async function generateEpisodesForEvent(event, resource, user, episodeData = {}) {
-  const startTime = new Date(event.event_start_date_time);
-  const endTime = new Date(event.event_end_date_time);
+// FIXED: Helper function to generate episodes for an event with timezone handling
+async function generateEpisodesForEvent(event, resource, user, episodeData = {}, facilityTimezone) {
+  console.log(`Generating episodes for event ${event.event_id} in timezone ${facilityTimezone}`);
+  
+  // Use stored UTC times from event
+  const utcStartTime = new Date(event.event_start_date_time);
+  const utcEndTime = new Date(event.event_end_date_time);
   const duration = event.episode_duration || 60; // in minutes
 
   const episodes = [];
-  let currentStart = new Date(startTime);
+  let currentUtcStart = new Date(utcStartTime);
 
-  while (currentStart < endTime) {
-    const currentEnd = new Date(currentStart.getTime() + duration * 60000);
+  console.log(`Episode generation: UTC ${utcStartTime.toISOString()} to ${utcEndTime.toISOString()}, duration ${duration}min`);
+
+  while (currentUtcStart < utcEndTime) {
+    const currentUtcEnd = new Date(currentUtcStart.getTime() + duration * 60000);
     
-    if (currentEnd > endTime) break;
+    if (currentUtcEnd > utcEndTime) {
+      console.log('Episode would exceed event end time, stopping generation');
+      break;
+    }
+
+    // Convert to facility time for title generation
+    const facilityStart = TimezoneUtils.convertToFacilityTime(currentUtcStart, facilityTimezone);
+    const facilityEnd = TimezoneUtils.convertToFacilityTime(currentUtcEnd, facilityTimezone);
 
     episodes.push({
       event_id: event.event_id,
-      episode_start_date_time: new Date(currentStart),
-      episode_end_date_time: new Date(currentEnd),
+      // Store UTC times in database
+      episode_start_date_time: new Date(currentUtcStart),
+      episode_end_date_time: new Date(currentUtcEnd),
       episode_duration: duration,
       episode_title: episodeData.episode_title || `Ice Time - ${resource.resource_name}`,
       episode_description: episodeData.episode_description || '',
@@ -347,11 +519,14 @@ async function generateEpisodesForEvent(event, resource, user, episodeData = {})
       updated_by: user.username
     });
 
-    currentStart = new Date(currentEnd);
+    console.log(`  Episode: UTC ${currentUtcStart.toISOString()} to ${currentUtcEnd.toISOString()} (Facility: ${facilityStart.toISOString()} to ${facilityEnd.toISOString()})`);
+
+    currentUtcStart = new Date(currentUtcEnd);
   }
 
   if (episodes.length > 0) {
     await Episode.bulkCreate(episodes);
+    console.log(`Created ${episodes.length} episodes for event ${event.event_id}`);
   }
 
   return episodes.length;
