@@ -1,3 +1,4 @@
+// frontend/src/services/calendarService.js (Enhanced for Drag-Drop)
 import api from './api';
 
 // Retry configuration
@@ -90,6 +91,111 @@ const calendarService = {
       return {
         success: false,
         error: error.response?.data?.message || 'Failed to fetch episode details'
+      };
+    }
+  },
+
+  // Validate episode move/resize
+  async validateEpisodeMove(episodeId, newStartTime, newEndTime, facilityId) {
+    try {
+      const response = await api.post('/api/episodes/validate-move', {
+        episode_id: episodeId,
+        new_start_time: newStartTime,
+        new_end_time: newEndTime,
+        facility_id: facilityId
+      });
+      
+      return { 
+        success: true, 
+        data: {
+          isValid: response.data.valid,
+          conflicts: response.data.conflicts || [],
+          warnings: response.data.warnings || [],
+          businessRuleViolations: response.data.businessRuleViolations || []
+        }
+      };
+    } catch (error) {
+      console.error('Validate episode move error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || 'Failed to validate move'
+      };
+    }
+  },
+
+  // Move episode with drag and drop
+  async moveEpisode(episodeId, newStartTime, newEndTime) {
+    try {
+      // Calculate new duration
+      const duration = Math.round((new Date(newEndTime) - new Date(newStartTime)) / (1000 * 60));
+
+      const response = await api.put(`/api/episodes/${episodeId}/move`, {
+        new_start_time: newStartTime,
+        new_end_time: newEndTime,
+        new_duration: duration
+      });
+      
+      return { success: true, data: response.data };
+    } catch (error) {
+      console.error('Move episode error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || 'Failed to move episode'
+      };
+    }
+  },
+
+  // Resize episode
+  async resizeEpisode(episodeId, newEndTime) {
+    try {
+      // Get current episode to calculate duration
+      const episodeResult = await this.getEpisodeById(episodeId);
+      if (!episodeResult.success) {
+        throw new Error('Failed to get episode details');
+      }
+
+      const startTime = episodeResult.data.episode.episode_start_date_time;
+      const duration = Math.round((new Date(newEndTime) - new Date(startTime)) / (1000 * 60));
+
+      const response = await api.put(`/api/episodes/${episodeId}/resize`, {
+        new_end_time: newEndTime,
+        new_duration: duration
+      });
+      
+      return { success: true, data: response.data };
+    } catch (error) {
+      console.error('Resize episode error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || 'Failed to resize episode'
+      };
+    }
+  },
+
+  // Batch validate multiple moves
+  async validateBatchMoves(moves) {
+    try {
+      const response = await api.post('/api/episodes/validate-batch-moves', {
+        moves: moves.map(move => ({
+          episode_id: move.episodeId,
+          new_start_time: move.newStartTime,
+          new_end_time: move.newEndTime
+        }))
+      });
+
+      return { 
+        success: true, 
+        data: {
+          isValid: response.data.valid,
+          results: response.data.results || [],
+          overallConflicts: response.data.overallConflicts || []
+        }
+      };
+    } catch (error) {
+      console.error('Batch validation error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || 'Failed to validate batch moves'
       };
     }
   },
@@ -302,6 +408,36 @@ const calendarService = {
     return this.getStatusColorMap()[episode.status] || '#FFFFFF';
   },
 
+  // Check if episode can be moved/resized
+  canEditEpisode(episode) {
+    if (!episode) return { allowed: false, reason: 'Episode not found' };
+    
+    const status = episode.extendedProps?.status || episode.status;
+    const startTime = new Date(episode.start);
+    
+    // Cannot edit past events
+    if (startTime < new Date()) {
+      return { allowed: false, reason: 'Cannot modify past ice time' };
+    }
+    
+    // Cannot edit booked events
+    if (status === 'booked') {
+      return { allowed: false, reason: 'Cannot modify booked ice time' };
+    }
+    
+    // Cannot edit if it has active bookings
+    if (episode.extendedProps?.hasBookings) {
+      return { allowed: false, reason: 'Cannot modify ice time with active bookings' };
+    }
+
+    // Check for maintenance status
+    if (status === 'maintenance') {
+      return { allowed: false, reason: 'Cannot modify maintenance periods' };
+    }
+    
+    return { allowed: true };
+  },
+
   // Validate episode data before submission
   validateEpisodeData(data) {
     const errors = {};
@@ -347,21 +483,58 @@ const calendarService = {
     return true;
   },
 
-  // Check if episode can be edited
-  canEditEpisode(episode) {
-    if (!episode) return false;
+  // Smart snap to grid helper
+  snapToGrid(dateTime, snapDuration = 15) {
+    const date = new Date(dateTime);
+    const minutes = date.getMinutes();
+    const snappedMinutes = Math.round(minutes / snapDuration) * snapDuration;
     
-    // Cannot edit if status is booked
-    if (episode.episode_status === 'booked') {
-      return false;
-    }
+    date.setMinutes(snappedMinutes);
+    date.setSeconds(0);
+    date.setMilliseconds(0);
     
-    // Cannot edit past episodes
-    if (new Date(episode.episode_start_date_time) < new Date()) {
-      return false;
-    }
+    return date;
+  },
+
+  // Check if time is within business hours
+  isWithinBusinessHours(startTime, endTime, facilitySchedule) {
+    if (!facilitySchedule) return true;
     
-    return true;
+    const dayOfWeek = startTime.getDay();
+    const daySchedule = facilitySchedule[dayOfWeek];
+    
+    if (!daySchedule || daySchedule.isClosed) return false;
+    
+    const startHour = startTime.getHours() + startTime.getMinutes() / 60;
+    const endHour = endTime.getHours() + endTime.getMinutes() / 60;
+    
+    return startHour >= daySchedule.openHour && endHour <= daySchedule.closeHour;
+  },
+
+  // Get conflict types for display
+  getConflictTypes() {
+    return {
+      OVERLAP: 'overlap',
+      BUSINESS_HOURS: 'business_hours',
+      FACILITY_CLOSED: 'facility_closed',
+      RESOURCE_UNAVAILABLE: 'resource_unavailable',
+      DURATION_INVALID: 'duration_invalid',
+      PAST_DATE: 'past_date'
+    };
+  },
+
+  // Format conflict message
+  formatConflictMessage(conflict) {
+    const messages = {
+      overlap: 'Time slot overlaps with existing ice time',
+      business_hours: 'Time is outside facility business hours',
+      facility_closed: 'Facility is closed at this time',
+      resource_unavailable: 'Resource is not available',
+      duration_invalid: 'Duration is too short or too long',
+      past_date: 'Cannot schedule in the past'
+    };
+    
+    return messages[conflict.type] || conflict.message || 'Schedule conflict detected';
   }
 };
 

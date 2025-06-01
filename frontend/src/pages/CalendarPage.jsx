@@ -1,15 +1,20 @@
+// frontend/src/pages/CalendarPage.jsx (Enhanced with Drag-Drop)
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CalendarView from '../components/calendar/CalendarView/CalendarView';
 import CalendarSidebar from '../components/calendar/CalendarSidebar/CalendarSidebar';
 import EventModal from '../components/calendar/EventModal/EventModal';
 import CreateEventModal from '../components/calendar/CreateEventModal/CreateEventModal';
+import DragDropConfirmModal from '../components/calendar/DragDropConfirmModal/DragDropConfirmModal';
+import ConflictModal from '../components/common/ConflictModal/ConflictModal';
 import LoadingSpinner from '../components/common/LoadingSpinner/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage/ErrorMessage';
 import { ToastContainer, useToast } from '../components/common/Toast/Toast';
 import calendarService from '../services/calendarService';
+import dragDropService from '../services/dragDropService';
 import facilityService from '../services/facilityService';
 import resourceService from '../services/resourceService';
 import authService from '../services/authService';
+import { dateUtils } from '../utils/dateUtils';
 import './CalendarPage.css';
 
 function CalendarPage() {
@@ -23,13 +28,20 @@ function CalendarPage() {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [showEventModal, setShowEventModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showDragDropModal, setShowDragDropModal] = useState(false);
+  const [showConflictModal, setShowConflictModal] = useState(false);
   const [selectedDateForCreate, setSelectedDateForCreate] = useState(null);
   const [calendarView, setCalendarView] = useState('month');
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  
+  // Drag and drop state
+  const [pendingMove, setPendingMove] = useState(null);
+  const [conflictData, setConflictData] = useState(null);
   
   // Toast notifications
-  const { toasts, addToast, removeToast, success, error: errorToast, info } = useToast();
+  const { toasts, addToast, removeToast, success, error: errorToast, info, warning } = useToast();
   
   // Ref to store the latest events for optimistic updates
   const eventsRef = useRef(events);
@@ -49,6 +61,7 @@ function CalendarPage() {
       if (loadEventsAbortController.current) {
         loadEventsAbortController.current.abort();
       }
+      dragDropService.cleanup();
     };
   }, []);
 
@@ -246,6 +259,235 @@ function CalendarPage() {
     setCalendarDate(date);
   }, []);
 
+  // Drag and drop handlers
+  const handleDragStart = (info) => {
+    if (!isAdmin) return;
+    
+    setIsDragging(true);
+    const editCheck = calendarService.canEditEpisode(info.event);
+    
+    if (!editCheck.allowed) {
+      info.jsEvent.preventDefault();
+      errorToast(editCheck.reason);
+      setIsDragging(false);
+      return;
+    }
+  };
+
+  const handleDragStop = (info) => {
+    setIsDragging(false);
+  };
+
+  const handleEventDrop = async (moveData) => {
+    if (!isAdmin) {
+      moveData.revert();
+      return;
+    }
+
+    try {
+      // Validate the move first
+      const validation = await calendarService.validateEpisodeMove(
+        moveData.episodeId,
+        moveData.newStartTime,
+        moveData.newEndTime,
+        selectedFacility?.facility_id
+      );
+
+      if (!validation.success) {
+        moveData.revert();
+        errorToast('Failed to validate move');
+        return;
+      }
+
+      const { isValid, conflicts, warnings } = validation.data;
+
+      // If there are conflicts, show conflict modal and revert
+      if (!isValid || conflicts.length > 0) {
+        moveData.revert();
+        setConflictData({
+          conflicts,
+          warnings,
+          title: 'Cannot Move Ice Time',
+          moveData
+        });
+        setShowConflictModal(true);
+        return;
+      }
+
+      // If only warnings, show confirmation modal
+      if (warnings.length > 0) {
+        const currentEvent = events.find(e => e.extendedProps.episodeId === moveData.episodeId);
+        const resourceName = resources.find(r => r.id === currentEvent?.resourceId)?.title;
+        
+        setPendingMove({
+          ...moveData,
+          episodeTitle: currentEvent?.title,
+          originalStart: moveData.originalEvent.start,
+          originalEnd: moveData.originalEvent.end,
+          newStart: moveData.newStartTime,
+          newEnd: moveData.newEndTime,
+          resourceName,
+          facilityName: selectedFacility?.facility_name,
+          moveType: 'move',
+          warnings
+        });
+        
+        setShowDragDropModal(true);
+        return;
+      }
+
+      // No conflicts or warnings, proceed directly
+      await executeMoveEpisode(moveData);
+      
+    } catch (error) {
+      moveData.revert();
+      errorToast('Failed to validate move');
+      console.error('Drop validation error:', error);
+    }
+  };
+
+  const handleEventResize = async (resizeData) => {
+    if (!isAdmin) {
+      resizeData.revert();
+      return;
+    }
+
+    try {
+      // Get current episode data
+      const currentEvent = events.find(e => e.extendedProps.episodeId === resizeData.episodeId);
+      
+      // Validate the resize
+      const validation = await calendarService.validateEpisodeMove(
+        resizeData.episodeId,
+        currentEvent.start,
+        resizeData.newEndTime,
+        selectedFacility?.facility_id
+      );
+
+      if (!validation.success) {
+        resizeData.revert();
+        errorToast('Failed to validate resize');
+        return;
+      }
+
+      const { isValid, conflicts, warnings } = validation.data;
+
+      // If there are conflicts, show conflict modal and revert
+      if (!isValid || conflicts.length > 0) {
+        resizeData.revert();
+        setConflictData({
+          conflicts,
+          warnings,
+          title: 'Cannot Resize Ice Time',
+          resizeData
+        });
+        setShowConflictModal(true);
+        return;
+      }
+
+      // If only warnings, show confirmation modal
+      if (warnings.length > 0) {
+        const resourceName = resources.find(r => r.id === currentEvent?.resourceId)?.title;
+        
+        setPendingMove({
+          ...resizeData,
+          episodeTitle: currentEvent?.title,
+          originalStart: currentEvent.start,
+          originalEnd: resizeData.originalEnd,
+          newStart: currentEvent.start,
+          newEnd: resizeData.newEndTime,
+          resourceName,
+          facilityName: selectedFacility?.facility_name,
+          moveType: 'resize',
+          warnings
+        });
+        
+        setShowDragDropModal(true);
+        return;
+      }
+
+      // No conflicts or warnings, proceed directly
+      await executeResizeEpisode(resizeData);
+      
+    } catch (error) {
+      resizeData.revert();
+      errorToast('Failed to validate resize');
+      console.error('Resize validation error:', error);
+    }
+  };
+
+  const executeMoveEpisode = async (moveData) => {
+    try {
+      const result = await calendarService.moveEpisode(
+        moveData.episodeId,
+        moveData.newStartTime,
+        moveData.newEndTime
+      );
+
+      if (result.success) {
+        success('Ice time moved successfully');
+        // Reload events to ensure consistency
+        await loadCalendarEvents();
+      } else {
+        moveData.revert();
+        errorToast(result.error);
+      }
+    } catch (error) {
+      moveData.revert();
+      errorToast('Failed to move ice time');
+      console.error('Move episode error:', error);
+    }
+  };
+
+  const executeResizeEpisode = async (resizeData) => {
+    try {
+      const result = await calendarService.resizeEpisode(
+        resizeData.episodeId,
+        resizeData.newEndTime
+      );
+
+      if (result.success) {
+        success(`Ice time duration updated to ${resizeData.newDuration} minutes`);
+        // Reload events to ensure consistency
+        await loadCalendarEvents();
+      } else {
+        resizeData.revert();
+        errorToast(result.error);
+      }
+    } catch (error) {
+      resizeData.revert();
+      errorToast('Failed to resize ice time');
+      console.error('Resize episode error:', error);
+    }
+  };
+
+  const handleDragDropConfirm = async () => {
+    if (!pendingMove) return;
+
+    setShowDragDropModal(false);
+    
+    if (pendingMove.moveType === 'resize') {
+      await executeResizeEpisode(pendingMove);
+    } else {
+      await executeMoveEpisode(pendingMove);
+    }
+    
+    setPendingMove(null);
+  };
+
+  const handleDragDropCancel = () => {
+    if (pendingMove && pendingMove.revert) {
+      pendingMove.revert();
+    }
+    setShowDragDropModal(false);
+    setPendingMove(null);
+  };
+
+  const handleConflictModalClose = () => {
+    setShowConflictModal(false);
+    setConflictData(null);
+  };
+
   // Optimistic update handlers
   const handleEventSuccess = (message) => {
     success(message);
@@ -293,7 +535,7 @@ function CalendarPage() {
           extendedProps: {
             ...event.extendedProps,
             status: updateData.episode_status || event.extendedProps.status,
-            price: updateData.episode_price ? `$${updateData.episode_price}` : event.extendedProps.price
+            price: updateData.episode_price ? `${updateData.episode_price}` : event.extendedProps.price
           },
           backgroundColor: calendarService.getStatusColorMap()[updateData.episode_status] || event.backgroundColor,
           borderColor: calendarService.getStatusColorMap()[updateData.episode_status] || event.borderColor
@@ -328,15 +570,23 @@ function CalendarPage() {
     <div className="calendar-page">
       <div className="calendar-header">
         <h1>Ice Time Calendar</h1>
-        {isAdmin && (
-          <button 
-            className="create-event-btn"
-            onClick={handleCreateEvent}
-            disabled={!selectedFacility || selectedResources.length === 0}
-          >
-            + Create Ice Time
-          </button>
-        )}
+        <div className="calendar-header-actions">
+          {isDragging && (
+            <div className="drag-indicator">
+              <span className="drag-icon">🔄</span>
+              <span>Drag to reschedule</span>
+            </div>
+          )}
+          {isAdmin && (
+            <button 
+              className="create-event-btn"
+              onClick={handleCreateEvent}
+              disabled={!selectedFacility || selectedResources.length === 0 || isDragging}
+            >
+              + Create Ice Time
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <ErrorMessage message={error} onDismiss={() => setError('')} />}
@@ -370,6 +620,10 @@ function CalendarPage() {
                 onEventClick={handleEventClick}
                 onDateClick={handleDateClick}
                 onDateSelect={handleDateSelect}
+                onEventDrop={handleEventDrop}
+                onEventResize={handleEventResize}
+                onDragStart={handleDragStart}
+                onDragStop={handleDragStop}
                 isAdmin={isAdmin}
               />
             </>
@@ -405,6 +659,29 @@ function CalendarPage() {
           facility={selectedFacility}
           calendarService={calendarService}
           resourceService={resourceService}
+        />
+      )}
+
+      {showDragDropModal && pendingMove && (
+        <DragDropConfirmModal
+          isOpen={showDragDropModal}
+          onClose={handleDragDropCancel}
+          onConfirm={handleDragDropConfirm}
+          moveData={pendingMove}
+          loading={false}
+        />
+      )}
+
+      {showConflictModal && conflictData && (
+        <ConflictModal
+          isOpen={showConflictModal}
+          onClose={handleConflictModalClose}
+          onConfirm={() => {}}
+          conflicts={conflictData.conflicts}
+          warnings={conflictData.warnings}
+          title={conflictData.title}
+          confirmText="OK"
+          loading={false}
         />
       )}
 

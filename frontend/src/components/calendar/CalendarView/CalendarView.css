@@ -1,3 +1,4 @@
+/* frontend/src/components/calendar/CalendarView/CalendarView.css */
 .calendar-view-container {
   height: 100%;
   display: flex;
@@ -60,11 +61,94 @@
   font-size: 12px;
   cursor: pointer;
   border: 1px solid rgba(0, 0, 0, 0.1);
+  position: relative;
+  transition: all 0.2s ease;
 }
 
+.fc-event-custom.editable {
+  cursor: move;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.fc-event-custom.editable:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+.fc-event-custom.non-editable {
+  cursor: default;
+  opacity: 0.8;
+}
+
+/* Drag and drop visual states */
+.fc-event-custom.fc-event-drag-start {
+  opacity: 0.7;
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+}
+
+.fc-event-custom.fc-event-dragging {
+  opacity: 0.8;
+  transform: rotate(2deg);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+}
+
+.fc-event-custom.fc-event-resizing {
+  box-shadow: 0 4px 12px rgba(66, 153, 225, 0.3);
+  border-color: #4299e1;
+}
+
+/* Drag handles */
+.fc-event-drag-handle {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  font-size: 8px;
+  color: rgba(0, 0, 0, 0.5);
+  cursor: move;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.8);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.fc-event-custom.editable:hover .fc-event-drag-handle {
+  opacity: 1;
+}
+
+.fc-event-resize-handle {
+  position: absolute;
+  bottom: 1px;
+  right: 1px;
+  width: 12px;
+  height: 12px;
+  font-size: 10px;
+  color: rgba(0, 0, 0, 0.5);
+  cursor: se-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.8);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.fc-event-custom.editable:hover .fc-event-resize-handle {
+  opacity: 1;
+}
+
+/* Event content */
 .fc-event-time {
   font-weight: 600;
   margin-bottom: 2px;
+  margin-left: 14px; /* Make room for drag handle */
 }
 
 .fc-event-title {
@@ -72,6 +156,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin-left: 14px; /* Make room for drag handle */
 }
 
 .fc-event-details {
@@ -80,6 +165,8 @@
   font-size: 11px;
   margin-top: 2px;
   opacity: 0.8;
+  margin-left: 14px; /* Make room for drag handle */
+  margin-right: 14px; /* Make room for resize handle */
 }
 
 .fc-event-resource {
@@ -101,6 +188,7 @@
   font-weight: 600;
   text-transform: uppercase;
   margin-top: 2px;
+  margin-left: 14px; /* Make room for drag handle */
 }
 
 /* Status-specific colors */
@@ -140,6 +228,36 @@
   background-color: #2196F3 !important;
   color: white !important;
   border-color: #1976D2 !important;
+}
+
+/* Drag ghost/mirror styling */
+.fc .fc-event-mirror {
+  opacity: 0.5 !important;
+  background-color: #4299e1 !important;
+  border-color: #3182ce !important;
+  color: white !important;
+  transform: rotate(3deg);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+}
+
+/* Drop zones and hints */
+.fc-timegrid-slot:hover {
+  background-color: rgba(66, 153, 225, 0.05) !important;
+}
+
+.fc-timegrid-slot.fc-highlight {
+  background-color: rgba(66, 153, 225, 0.1) !important;
+}
+
+/* Conflict detection styles */
+.fc-event-custom.conflict-warning {
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
+}
+
+.fc-event-custom.conflict-error {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.3);
 }
 
 /* List view customization */
@@ -191,6 +309,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
+  margin-bottom: 12px;
 }
 
 .legend-item {
@@ -229,6 +348,37 @@
   background-color: #9E9E9E;
 }
 
+/* Drag and drop help text */
+.drag-drop-help {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.drag-drop-help p {
+  margin: 0;
+  font-size: 12px;
+  color: #718096;
+  font-style: italic;
+}
+
+/* Mobile drag indicators */
+@media (max-width: 768px) {
+  .fc-event-drag-handle,
+  .fc-event-resize-handle {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.9);
+  }
+  
+  .fc-event-time,
+  .fc-event-title,
+  .fc-event-details,
+  .fc-event-status-badge {
+    margin-left: 18px;
+    margin-right: 18px;
+  }
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
   .calendar-view-container {
@@ -256,5 +406,9 @@
   .legend-items {
     flex-direction: column;
     gap: 8px;
+  }
+  
+  .drag-drop-help {
+    display: none;
   }
 }

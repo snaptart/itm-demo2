@@ -1,6 +1,11 @@
+// backend/src/controllers/episodeController.js (Complete with all methods)
 const { Episode, Event, Resource, Facility, Program, Booking, User } = require('../models');
 const { Op } = require('sequelize');
 const sequelize = require('../config/database');
+
+// Import new services (these will need to be created or commented out for now)
+// const conflictDetectionService = require('../services/conflictDetectionService');
+// const businessRulesValidator = require('../utils/businessRulesValidator');
 
 const episodeController = {
   // Get episodes for calendar view
@@ -144,19 +149,19 @@ const episodeController = {
         start: episode.episode_start_date_time,
         end: episode.episode_end_date_time,
         resourceId: episode.event.resource_id,
-        backgroundColor: episode.getStatusColor(),
-        borderColor: episode.getStatusColor(),
+        backgroundColor: getStatusColor(episode.episode_status),
+        borderColor: getStatusColor(episode.episode_status),
         textColor: episode.episode_status === 'available' ? '#000000' : '#FFFFFF',
         extendedProps: {
           episodeId: episode.episode_id,
           status: episode.episode_status,
-          price: episode.getFormattedPrice(),
+          price: episode.episode_price ? `$${parseFloat(episode.episode_price).toFixed(2)}` : 'N/A',
           duration: episode.episode_duration,
           facility: episode.event.resource.facility.facility_name,
           resource: episode.event.resource.resource_name,
           program: episode.program?.program_name || null,
           assignedProgram: episode.assignedProgram?.program_name || null,
-          canBook: episode.canBeBooked(),
+          canBook: ['available', 'assigned'].includes(episode.episode_status),
           description: episode.episode_description
         }
       }));
@@ -734,7 +739,139 @@ const episodeController = {
         error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
+  },
+
+  // Validate episode move/resize (Placeholder for now)
+  async validateEpisodeMove(req, res) {
+    try {
+      const { 
+        episode_id, 
+        new_start_time, 
+        new_end_time, 
+        facility_id 
+      } = req.body;
+
+      // Validate required fields
+      if (!episode_id || !new_start_time || !new_end_time) {
+        return res.status(400).json({ 
+          message: 'Episode ID, new start time, and new end time are required' 
+        });
+      }
+
+      // Basic validation for now - in a real implementation, you'd use the conflict detection service
+      const newStart = new Date(new_start_time);
+      const newEnd = new Date(new_end_time);
+      
+      if (isNaN(newStart) || isNaN(newEnd)) {
+        return res.status(400).json({ 
+          message: 'Invalid date format' 
+        });
+      }
+      
+      if (newStart >= newEnd) {
+        return res.status(400).json({ 
+          message: 'End time must be after start time' 
+        });
+      }
+
+      // For now, return a simple validation response
+      res.json({
+        valid: true,
+        conflicts: [],
+        warnings: [],
+        businessRuleViolations: []
+      });
+
+    } catch (error) {
+      console.error('Validate episode move error:', error);
+      res.status(500).json({ 
+        message: 'An error occurred while validating the move'
+      });
+    }
+  },
+
+  // Move episode (Placeholder for now)
+  async moveEpisode(req, res) {
+    try {
+      const { id } = req.params;
+      const { new_start_time, new_end_time, new_duration } = req.body;
+
+      // For now, just update using the regular update method
+      const updateResult = await this.updateEpisode(req, res);
+      return updateResult;
+
+    } catch (error) {
+      console.error('Move episode error:', error);
+      res.status(500).json({ 
+        message: 'An error occurred while moving the episode'
+      });
+    }
+  },
+
+  // Resize episode (Placeholder for now)
+  async resizeEpisode(req, res) {
+    try {
+      const { id } = req.params;
+      const { new_end_time, new_duration } = req.body;
+
+      // For now, just update using the regular update method
+      const updateResult = await this.updateEpisode(req, res);
+      return updateResult;
+
+    } catch (error) {
+      console.error('Resize episode error:', error);
+      res.status(500).json({ 
+        message: 'An error occurred while resizing the episode'
+      });
+    }
+  },
+
+  // Validate batch moves (Placeholder for now)
+  async validateBatchMoves(req, res) {
+    try {
+      const { moves } = req.body;
+
+      if (!Array.isArray(moves) || moves.length === 0) {
+        return res.status(400).json({ 
+          message: 'Moves array is required and cannot be empty' 
+        });
+      }
+
+      // For now, return a simple validation response
+      const results = moves.map(move => ({
+        episode_id: move.episode_id,
+        valid: true,
+        conflicts: [],
+        warnings: []
+      }));
+
+      res.json({
+        valid: true,
+        results,
+        overallConflicts: []
+      });
+
+    } catch (error) {
+      console.error('Validate batch moves error:', error);
+      res.status(500).json({ 
+        message: 'An error occurred while validating batch moves'
+      });
+    }
   }
 };
 
-module.exports = episodeController; 
+// Helper function to get status color
+function getStatusColor(status) {
+  const statusColors = {
+    'available': '#FFFFFF',      // White: Unassigned
+    'assigned': '#FFEB3B',       // Yellow: Assigned Pending
+    'pending': '#FFEB3B',        // Yellow: Assigned Pending
+    'booked': '#4CAF50',         // Green: Booked/Paid
+    'maintenance': '#9E9E9E',    // Gray: Unavailable/Maintenance
+    'cancelled': '#9E9E9E'       // Gray: Unavailable
+  };
+  
+  return statusColors[status] || '#FFFFFF';
+}
+
+module.exports = episodeController;

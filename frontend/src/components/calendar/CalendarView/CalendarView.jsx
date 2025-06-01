@@ -1,3 +1,4 @@
+// frontend/src/components/calendar/CalendarView/CalendarView.jsx
 import React, { useRef, useEffect } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -16,6 +17,10 @@ function CalendarView({
   onEventClick,
   onDateClick,
   onDateSelect,
+  onEventDrop,
+  onEventResize,
+  onDragStart,
+  onDragStop,
   isAdmin 
 }) {
   const calendarRef = useRef(null);
@@ -68,13 +73,166 @@ function CalendarView({
     };
   };
 
+  // Handle event drop (drag and drop)
+  const handleEventDrop = (info) => {
+    if (!isAdmin || !onEventDrop) {
+      info.revert();
+      return;
+    }
+
+    const { event, delta, revert } = info;
+    const episodeId = event.extendedProps.episodeId;
+    
+    if (!episodeId) {
+      console.error('No episode ID found for dropped event');
+      revert();
+      return;
+    }
+
+    // Calculate new start and end times
+    const newStart = new Date(event.start);
+    const newEnd = new Date(event.end);
+    
+    // Check if dropping to a past date
+    if (newStart < new Date()) {
+      revert();
+      if (window.toast) {
+        window.toast.error('Cannot move ice time to the past');
+      }
+      return;
+    }
+
+    // Add visual feedback
+    event.setProp('className', event.classNames.concat(['fc-event-dragging']));
+
+    const moveData = {
+      episodeId,
+      newStartTime: newStart.toISOString(),
+      newEndTime: newEnd.toISOString(),
+      delta: {
+        days: Math.round(delta.days),
+        milliseconds: delta.milliseconds
+      },
+      originalEvent: {
+        start: new Date(event.start.getTime() - delta.milliseconds),
+        end: new Date(event.end.getTime() - delta.milliseconds)
+      },
+      revert
+    };
+
+    onEventDrop(moveData);
+  };
+
+  // Handle event resize
+  const handleEventResize = (info) => {
+    if (!isAdmin || !onEventResize) {
+      info.revert();
+      return;
+    }
+
+    const { event, endDelta, revert } = info;
+    const episodeId = event.extendedProps.episodeId;
+    
+    if (!episodeId) {
+      console.error('No episode ID found for resized event');
+      revert();
+      return;
+    }
+
+    // Calculate new duration
+    const newEnd = new Date(event.end);
+    const duration = Math.round((newEnd - event.start) / (1000 * 60)); // in minutes
+    
+    // Validate minimum duration (30 minutes)
+    if (duration < 30) {
+      revert();
+      if (window.toast) {
+        window.toast.error('Ice time must be at least 30 minutes long');
+      }
+      return;
+    }
+
+    // Validate maximum duration (4 hours)
+    if (duration > 240) {
+      revert();
+      if (window.toast) {
+        window.toast.error('Ice time cannot exceed 4 hours');
+      }
+      return;
+    }
+
+    // Add visual feedback
+    event.setProp('className', event.classNames.concat(['fc-event-resizing']));
+
+    const resizeData = {
+      episodeId,
+      newEndTime: newEnd.toISOString(),
+      newDuration: duration,
+      endDelta: {
+        days: Math.round(endDelta.days),
+        milliseconds: endDelta.milliseconds
+      },
+      originalEnd: new Date(event.end.getTime() - endDelta.milliseconds),
+      revert
+    };
+
+    onEventResize(resizeData);
+  };
+
+  // Handle drag start
+  const handleEventDragStart = (info) => {
+    if (onDragStart) {
+      onDragStart(info);
+    }
+    
+    // Add dragging class for visual feedback
+    info.event.setProp('className', info.event.classNames.concat(['fc-event-drag-start']));
+  };
+
+  // Handle drag stop
+  const handleEventDragStop = (info) => {
+    if (onDragStop) {
+      onDragStop(info);
+    }
+    
+    // Remove dragging classes
+    const classNames = info.event.classNames.filter(c => 
+      !['fc-event-drag-start', 'fc-event-dragging', 'fc-event-resizing'].includes(c)
+    );
+    info.event.setProp('className', classNames);
+  };
+
+  // Check if event is editable
+  const isEventEditable = (event) => {
+    if (!isAdmin) return false;
+    
+    const status = event.extendedProps?.status;
+    const startTime = new Date(event.start);
+    
+    // Cannot edit past events
+    if (startTime < new Date()) return false;
+    
+    // Cannot edit booked events
+    if (status === 'booked') return false;
+    
+    // Cannot edit if it has bookings
+    if (event.extendedProps?.hasBookings) return false;
+    
+    return true;
+  };
+
   const renderEventContent = (eventInfo) => {
     const { event } = eventInfo;
     const isMultiDay = event.allDay || 
       (event.start && event.end && event.start.getDate() !== event.end.getDate());
+    
+    const editable = isEventEditable(event);
 
     return (
-      <div className={`fc-event-custom ${event.extendedProps.status}`}>
+      <div className={`fc-event-custom ${event.extendedProps.status} ${editable ? 'editable' : 'non-editable'}`}>
+        {editable && isAdmin && (
+          <div className="fc-event-drag-handle">⋮⋮</div>
+        )}
         <div className="fc-event-time">
           {eventInfo.timeText}
         </div>
@@ -93,6 +251,9 @@ function CalendarView({
           <div className={`fc-event-status-badge ${event.extendedProps.status}`}>
             {getStatusLabel(event.extendedProps.status)}
           </div>
+        )}
+        {editable && isAdmin && view !== 'dayGridMonth' && (
+          <div className="fc-event-resize-handle">↘</div>
         )}
       </div>
     );
@@ -124,6 +285,14 @@ function CalendarView({
     }
   };
 
+  // Transform events to include editability
+  const processedEvents = events.map(event => ({
+    ...event,
+    editable: isEventEditable(event),
+    startEditable: isEventEditable(event),
+    durationEditable: isEventEditable(event) && view !== 'dayGridMonth'
+  }));
+
   return (
     <div className="calendar-view-container">
       <FullCalendar
@@ -133,15 +302,25 @@ function CalendarView({
         initialDate={date}
         headerToolbar={getHeaderToolbar()}
         businessHours={getBusinessHours()}
-        events={events}
+        events={processedEvents}
         eventClick={onEventClick}
         eventContent={renderEventContent}
+        eventDrop={handleEventDrop}
+        eventResize={handleEventResize}
+        eventDragStart={handleEventDragStart}
+        eventDragStop={handleEventDragStop}
         datesSet={handleDatesSet}
         viewDidMount={handleViewDidMount}
         dateClick={onDateClick}
         select={onDateSelect}
         selectable={isAdmin}
         selectMirror={true}
+        editable={isAdmin}
+        eventStartEditable={true}
+        eventDurationEditable={true}
+        dragRevertDuration={300}
+        dragScroll={true}
+        snapDuration="00:15:00"
         height="100%"
         nowIndicator={true}
         slotMinTime="06:00:00"
@@ -211,6 +390,11 @@ function CalendarView({
             <span>Unavailable</span>
           </div>
         </div>
+        {isAdmin && (
+          <div className="drag-drop-help">
+            <p><strong>Drag & Drop:</strong> Drag ice time slots to reschedule them. Resize by dragging the bottom edge.</p>
+          </div>
+        )}
       </div>
     </div>
   );
