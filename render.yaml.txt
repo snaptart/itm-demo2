@@ -1,0 +1,42 @@
+services:
+  # Backend API Service
+  - type: web
+    name: itm-demo2-api
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && node src/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false  # You'll add this manually in Render dashboard
+      - key: JWT_SECRET
+        sync: false  # You'll add this manually in Render dashboard
+      - key: FRONTEND_URL
+        sync: false  # You'll update this after frontend deploys
+      - key: PORT
+        value: 10000  # Render assigns this automatically
+
+  # Frontend Static Site
+  - type: web
+    name: itm-demo2-frontend
+    runtime: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/build
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: REACT_APP_API_URL
+        sync: false  # You'll update this after backend deploys
