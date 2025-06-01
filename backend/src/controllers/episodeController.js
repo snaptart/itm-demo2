@@ -1,11 +1,7 @@
-// backend/src/controllers/episodeController.js (Complete with all methods)
+// backend/src/controllers/episodeController.js (Fixed with proper drag-drop implementation)
 const { Episode, Event, Resource, Facility, Program, Booking, User } = require('../models');
 const { Op } = require('sequelize');
 const sequelize = require('../config/database');
-
-// Import new services (these will need to be created or commented out for now)
-// const conflictDetectionService = require('../services/conflictDetectionService');
-// const businessRulesValidator = require('../utils/businessRulesValidator');
 
 const episodeController = {
   // Get episodes for calendar view
@@ -162,7 +158,8 @@ const episodeController = {
           program: episode.program?.program_name || null,
           assignedProgram: episode.assignedProgram?.program_name || null,
           canBook: ['available', 'assigned'].includes(episode.episode_status),
-          description: episode.episode_description
+          description: episode.episode_description,
+          hasBookings: episode.bookings && episode.bookings.length > 0
         }
       }));
 
@@ -554,6 +551,44 @@ const episodeController = {
         updateData.episode_status = req.body.episode_status;
       }
 
+      // Handle datetime updates for drag-drop operations
+      if (req.body.episode_start_date_time !== undefined) {
+        const newStartTime = new Date(req.body.episode_start_date_time);
+        if (isNaN(newStartTime)) {
+          await transaction.rollback();
+          return res.status(400).json({ 
+            message: 'Invalid start date format' 
+          });
+        }
+        updateData.episode_start_date_time = newStartTime;
+      }
+
+      if (req.body.episode_end_date_time !== undefined) {
+        const newEndTime = new Date(req.body.episode_end_date_time);
+        if (isNaN(newEndTime)) {
+          await transaction.rollback();
+          return res.status(400).json({ 
+            message: 'Invalid end date format' 
+          });
+        }
+        updateData.episode_end_date_time = newEndTime;
+      }
+
+      // Recalculate duration if times changed
+      if (updateData.episode_start_date_time || updateData.episode_end_date_time) {
+        const startTime = updateData.episode_start_date_time || episode.episode_start_date_time;
+        const endTime = updateData.episode_end_date_time || episode.episode_end_date_time;
+        
+        if (startTime >= endTime) {
+          await transaction.rollback();
+          return res.status(400).json({ 
+            message: 'End time must be after start time' 
+          });
+        }
+
+        updateData.episode_duration = Math.round((endTime - startTime) / (1000 * 60));
+      }
+
       updateData.updated_by = req.user.username;
 
       // Update episode
@@ -741,7 +776,7 @@ const episodeController = {
     }
   },
 
-  // Validate episode move/resize (Placeholder for now)
+  // Validate episode move/resize
   async validateEpisodeMove(req, res) {
     try {
       const { 
@@ -758,7 +793,36 @@ const episodeController = {
         });
       }
 
-      // Basic validation for now - in a real implementation, you'd use the conflict detection service
+      // Get the episode to validate
+      const episode = await Episode.findByPk(episode_id, {
+        include: [{
+          model: Event,
+          as: 'event',
+          include: [{
+            model: Resource,
+            as: 'resource',
+            include: [{
+              model: Facility,
+              as: 'facility'
+            }]
+          }]
+        }],
+      });
+
+      if (!episode) {
+        return res.status(404).json({ 
+          message: 'Episode not found' 
+        });
+      }
+
+      // Check permission
+      if (episode.event.resource.facility.admin_user_id !== req.user.user_id) {
+        return res.status(403).json({ 
+          message: 'You do not have permission to move this episode' 
+        });
+      }
+
+      // Basic validation
       const newStart = new Date(new_start_time);
       const newEnd = new Date(new_end_time);
       
@@ -774,12 +838,136 @@ const episodeController = {
         });
       }
 
-      // For now, return a simple validation response
+      if (newStart < new Date()) {
+        return res.status(400).json({ 
+          message: 'Cannot move episode to the past' 
+        });
+      }
+
+      const conflicts = [];
+      const warnings = [];
+
+      // Check if episode can be moved
+      if (episode.episode_status === 'booked') {
+        conflicts.push({
+          type: 'booked_episode',
+          severity: 'error',
+          title: 'Booked Episode',
+          description: 'Cannot move episodes that are already booked'
+        });
+      }
+
+      if (new Date(episode.episode_start_date_time) < new Date()) {
+        conflicts.push({
+          type: 'past_episode',
+          severity: 'error',
+          title: 'Past Episode',
+          description: 'Cannot move episodes that have already started'
+        });
+      }
+
+      // Check for overlapping episodes on the same resource
+      const overlappingEpisode = await Episode.findOne({
+        where: {
+          episode_id: { [Op.ne]: episode_id },
+          [Op.or]: [
+            {
+              episode_start_date_time: {
+                [Op.between]: [newStart, newEnd]
+              }
+            },
+            {
+              episode_end_date_time: {
+                [Op.between]: [newStart, newEnd]
+              }
+            },
+            {
+              [Op.and]: [
+                {
+                  episode_start_date_time: {
+                    [Op.lte]: newStart
+                  }
+                },
+                {
+                  episode_end_date_time: {
+                    [Op.gte]: newEnd
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        include: [{
+          model: Event,
+          as: 'event',
+          where: { resource_id: episode.event.resource_id },
+          required: true
+        }]
+      });
+
+      if (overlappingEpisode) {
+        conflicts.push({
+          type: 'overlap',
+          severity: 'error',
+          title: 'Schedule Overlap',
+          description: `Conflicts with existing ice time: ${overlappingEpisode.episode_title}`,
+          time: `${overlappingEpisode.episode_start_date_time.toLocaleString()} - ${overlappingEpisode.episode_end_date_time.toLocaleString()}`
+        });
+      }
+
+      // Check business hours (basic validation)
+      const facility = episode.event.resource.facility;
+      const dailyStart = facility.facility_daily_start_time || '06:00:00';
+      const dailyEnd = facility.facility_daily_end_time || '23:00:00';
+      
+      const startTimeStr = newStart.toTimeString().slice(0, 8);
+      const endTimeStr = newEnd.toTimeString().slice(0, 8);
+
+      if (startTimeStr < dailyStart || endTimeStr > dailyEnd) {
+        conflicts.push({
+          type: 'business_hours',
+          severity: 'error',
+          title: 'Outside Business Hours',
+          description: `Facility hours are ${dailyStart} - ${dailyEnd}`,
+          time: `${new_start_time} - ${new_end_time}`
+        });
+      }
+
+      // Duration validation
+      const duration = Math.round((newEnd - newStart) / (1000 * 60));
+      if (duration < 30) {
+        conflicts.push({
+          type: 'duration_too_short',
+          severity: 'error',
+          title: 'Duration Too Short',
+          description: 'Ice time must be at least 30 minutes long'
+        });
+      }
+
+      if (duration > 480) {
+        conflicts.push({
+          type: 'duration_too_long',
+          severity: 'error',
+          title: 'Duration Too Long',
+          description: 'Ice time cannot exceed 8 hours'
+        });
+      }
+
+      // Warning for very long durations
+      if (duration > 240 && duration <= 480) {
+        warnings.push({
+          type: 'duration_long',
+          severity: 'warning',
+          title: 'Long Duration',
+          description: 'This is a very long ice time slot'
+        });
+      }
+
       res.json({
-        valid: true,
-        conflicts: [],
-        warnings: [],
-        businessRuleViolations: []
+        valid: conflicts.length === 0,
+        conflicts,
+        warnings,
+        businessRuleViolations: conflicts.map(c => c.description)
       });
 
     } catch (error) {
@@ -790,43 +978,280 @@ const episodeController = {
     }
   },
 
-  // Move episode (Placeholder for now)
+  // Move episode
   async moveEpisode(req, res) {
+    const transaction = await sequelize.transaction();
+    
     try {
       const { id } = req.params;
       const { new_start_time, new_end_time, new_duration } = req.body;
 
-      // For now, just update using the regular update method
-      const updateResult = await this.updateEpisode(req, res);
-      return updateResult;
+      // Validate input
+      if (!new_start_time || !new_end_time) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'New start time and end time are required' 
+        });
+      }
+
+      const episode = await Episode.findByPk(id, {
+        include: [{
+          model: Event,
+          as: 'event',
+          include: [{
+            model: Resource,
+            as: 'resource',
+            include: [{
+              model: Facility,
+              as: 'facility'
+            }]
+          }]
+        }],
+        transaction
+      });
+
+      if (!episode) {
+        await transaction.rollback();
+        return res.status(404).json({ 
+          message: 'Episode not found' 
+        });
+      }
+
+      // Check permission
+      if (episode.event.resource.facility.admin_user_id !== req.user.user_id) {
+        await transaction.rollback();
+        return res.status(403).json({ 
+          message: 'You do not have permission to move this episode' 
+        });
+      }
+
+      // Validate dates
+      const newStart = new Date(new_start_time);
+      const newEnd = new Date(new_end_time);
+      
+      if (isNaN(newStart) || isNaN(newEnd)) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Invalid date format' 
+        });
+      }
+
+      if (newStart >= newEnd) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'End time must be after start time' 
+        });
+      }
+
+      if (newStart < new Date()) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Cannot move episode to the past' 
+        });
+      }
+
+      // Check if episode can be moved
+      if (episode.episode_status === 'booked') {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Cannot move booked episodes' 
+        });
+      }
+
+      if (new Date(episode.episode_start_date_time) < new Date()) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Cannot move episodes that have already started' 
+        });
+      }
+
+      // Calculate new duration
+      const duration = new_duration || Math.round((newEnd - newStart) / (1000 * 60));
+
+      // Update the episode
+      await episode.update({
+        episode_start_date_time: newStart,
+        episode_end_date_time: newEnd,
+        episode_duration: duration,
+        updated_by: req.user.username
+      }, { transaction });
+
+      await transaction.commit();
+
+      // Reload with associations
+      const updatedEpisode = await Episode.findByPk(id, {
+        include: [
+          {
+            model: Event,
+            as: 'event',
+            include: [{
+              model: Resource,
+              as: 'resource',
+              include: [{
+                model: Facility,
+                as: 'facility'
+              }]
+            }]
+          }
+        ]
+      });
+
+      res.json({
+        message: 'Episode moved successfully',
+        episode: updatedEpisode
+      });
 
     } catch (error) {
+      await transaction.rollback();
       console.error('Move episode error:', error);
       res.status(500).json({ 
-        message: 'An error occurred while moving the episode'
+        message: 'An error occurred while moving the episode',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   },
 
-  // Resize episode (Placeholder for now)
+  // Resize episode
   async resizeEpisode(req, res) {
+    const transaction = await sequelize.transaction();
+    
     try {
       const { id } = req.params;
       const { new_end_time, new_duration } = req.body;
 
-      // For now, just update using the regular update method
-      const updateResult = await this.updateEpisode(req, res);
-      return updateResult;
+      // Validate input
+      if (!new_end_time) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'New end time is required' 
+        });
+      }
+
+      const episode = await Episode.findByPk(id, {
+        include: [{
+          model: Event,
+          as: 'event',
+          include: [{
+            model: Resource,
+            as: 'resource',
+            include: [{
+              model: Facility,
+              as: 'facility'
+            }]
+          }]
+        }],
+        transaction
+      });
+
+      if (!episode) {
+        await transaction.rollback();
+        return res.status(404).json({ 
+          message: 'Episode not found' 
+        });
+      }
+
+      // Check permission
+      if (episode.event.resource.facility.admin_user_id !== req.user.user_id) {
+        await transaction.rollback();
+        return res.status(403).json({ 
+          message: 'You do not have permission to resize this episode' 
+        });
+      }
+
+      // Validate new end time
+      const newEnd = new Date(new_end_time);
+      const startTime = new Date(episode.episode_start_date_time);
+      
+      if (isNaN(newEnd)) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Invalid end time format' 
+        });
+      }
+
+      if (newEnd <= startTime) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'End time must be after start time' 
+        });
+      }
+
+      // Check if episode can be resized
+      if (episode.episode_status === 'booked') {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Cannot resize booked episodes' 
+        });
+      }
+
+      if (startTime < new Date()) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Cannot resize episodes that have already started' 
+        });
+      }
+
+      // Calculate new duration
+      const duration = new_duration || Math.round((newEnd - startTime) / (1000 * 60));
+
+      // Validate duration
+      if (duration < 30) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Ice time must be at least 30 minutes long' 
+        });
+      }
+
+      if (duration > 480) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Ice time cannot exceed 8 hours' 
+        });
+      }
+
+      // Update the episode
+      await episode.update({
+        episode_end_date_time: newEnd,
+        episode_duration: duration,
+        updated_by: req.user.username
+      }, { transaction });
+
+      await transaction.commit();
+
+      // Reload with associations
+      const updatedEpisode = await Episode.findByPk(id, {
+        include: [
+          {
+            model: Event,
+            as: 'event',
+            include: [{
+              model: Resource,
+              as: 'resource',
+              include: [{
+                model: Facility,
+                as: 'facility'
+              }]
+            }]
+          }
+        ]
+      });
+
+      res.json({
+        message: 'Episode resized successfully',
+        episode: updatedEpisode
+      });
 
     } catch (error) {
+      await transaction.rollback();
       console.error('Resize episode error:', error);
       res.status(500).json({ 
-        message: 'An error occurred while resizing the episode'
+        message: 'An error occurred while resizing the episode',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   },
 
-  // Validate batch moves (Placeholder for now)
+  // Validate batch moves
   async validateBatchMoves(req, res) {
     try {
       const { moves } = req.body;
@@ -837,18 +1262,56 @@ const episodeController = {
         });
       }
 
-      // For now, return a simple validation response
-      const results = moves.map(move => ({
-        episode_id: move.episode_id,
-        valid: true,
-        conflicts: [],
-        warnings: []
-      }));
+      const results = [];
+
+      for (const move of moves) {
+        const { episode_id, new_start_time, new_end_time } = move;
+        
+        // Validate each move individually
+        const validationResult = await episodeController.validateEpisodeMove({
+          body: { episode_id, new_start_time, new_end_time },
+          user: req.user
+        });
+
+        results.push({
+          episode_id,
+          valid: validationResult.valid || false,
+          conflicts: validationResult.conflicts || [],
+          warnings: validationResult.warnings || []
+        });
+      }
+
+      // Check for cross-episode conflicts
+      const overallConflicts = [];
+      
+      // Simple check for time overlaps between moved episodes
+      for (let i = 0; i < moves.length - 1; i++) {
+        for (let j = i + 1; j < moves.length; j++) {
+          const move1 = moves[i];
+          const move2 = moves[j];
+          
+          const start1 = new Date(move1.new_start_time);
+          const end1 = new Date(move1.new_end_time);
+          const start2 = new Date(move2.new_start_time);
+          const end2 = new Date(move2.new_end_time);
+          
+          // Check if they overlap
+          if (start1 < end2 && start2 < end1) {
+            overallConflicts.push({
+              type: 'batch_overlap',
+              episodes: [move1.episode_id, move2.episode_id],
+              description: `Episodes ${move1.episode_id} and ${move2.episode_id} would overlap after moving`
+            });
+          }
+        }
+      }
+
+      const allValid = results.every(r => r.valid) && overallConflicts.length === 0;
 
       res.json({
-        valid: true,
+        valid: allValid,
         results,
-        overallConflicts: []
+        overallConflicts
       });
 
     } catch (error) {

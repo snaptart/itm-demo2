@@ -1,4 +1,4 @@
-// frontend/src/components/calendar/CalendarView/CalendarView.jsx
+// frontend/src/components/calendar/CalendarView/CalendarView.jsx (Fixed drag-drop data passing)
 import React, { useRef, useEffect } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -96,9 +96,6 @@ function CalendarView({
     // Check if dropping to a past date
     if (newStart < new Date()) {
       revert();
-      if (window.toast) {
-        window.toast.error('Cannot move ice time to the past');
-      }
       return;
     }
 
@@ -110,12 +107,12 @@ function CalendarView({
       newStartTime: newStart.toISOString(),
       newEndTime: newEnd.toISOString(),
       delta: {
-        days: Math.round(delta.days),
-        milliseconds: delta.milliseconds
+        days: Math.round(delta.days || 0),
+        milliseconds: delta.milliseconds || 0
       },
       originalEvent: {
-        start: new Date(event.start.getTime() - delta.milliseconds),
-        end: new Date(event.end.getTime() - delta.milliseconds)
+        start: new Date(event.start.getTime() - (delta.milliseconds || 0)),
+        end: new Date(event.end.getTime() - (delta.milliseconds || 0))
       },
       revert
     };
@@ -146,18 +143,12 @@ function CalendarView({
     // Validate minimum duration (30 minutes)
     if (duration < 30) {
       revert();
-      if (window.toast) {
-        window.toast.error('Ice time must be at least 30 minutes long');
-      }
       return;
     }
 
-    // Validate maximum duration (4 hours)
-    if (duration > 240) {
+    // Validate maximum duration (8 hours)
+    if (duration > 480) {
       revert();
-      if (window.toast) {
-        window.toast.error('Ice time cannot exceed 4 hours');
-      }
       return;
     }
 
@@ -169,10 +160,10 @@ function CalendarView({
       newEndTime: newEnd.toISOString(),
       newDuration: duration,
       endDelta: {
-        days: Math.round(endDelta.days),
-        milliseconds: endDelta.milliseconds
+        days: Math.round(endDelta.days || 0),
+        milliseconds: endDelta.milliseconds || 0
       },
-      originalEnd: new Date(event.end.getTime() - endDelta.milliseconds),
+      originalEnd: new Date(event.end.getTime() - (endDelta.milliseconds || 0)),
       revert
     };
 

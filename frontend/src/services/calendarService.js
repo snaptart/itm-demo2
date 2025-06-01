@@ -1,4 +1,4 @@
-// frontend/src/services/calendarService.js (Enhanced for Drag-Drop)
+// frontend/src/services/calendarService.js (Fixed for proper drag-drop)
 import api from './api';
 
 // Retry configuration
@@ -226,12 +226,33 @@ const calendarService = {
   async updateEpisode(id, episodeData) {
     try {
       // Clean up the data before sending
-      const cleanData = {
-        episode_title: episodeData.episode_title?.trim(),
-        episode_description: episodeData.episode_description?.trim(),
-        episode_price: episodeData.episode_price,
-        episode_status: episodeData.episode_status
-      };
+      const cleanData = {};
+      
+      // Only include fields that are defined
+      if (episodeData.episode_title !== undefined) {
+        cleanData.episode_title = episodeData.episode_title?.trim();
+      }
+      
+      if (episodeData.episode_description !== undefined) {
+        cleanData.episode_description = episodeData.episode_description?.trim();
+      }
+      
+      if (episodeData.episode_price !== undefined) {
+        cleanData.episode_price = episodeData.episode_price;
+      }
+      
+      if (episodeData.episode_status !== undefined) {
+        cleanData.episode_status = episodeData.episode_status;
+      }
+
+      // Handle datetime updates for drag-drop
+      if (episodeData.episode_start_date_time !== undefined) {
+        cleanData.episode_start_date_time = episodeData.episode_start_date_time;
+      }
+
+      if (episodeData.episode_end_date_time !== undefined) {
+        cleanData.episode_end_date_time = episodeData.episode_end_date_time;
+      }
       
       const response = await api.put(`/api/episodes/${id}`, cleanData);
       return { success: true, data: response.data };

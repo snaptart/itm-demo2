@@ -1,54 +1,58 @@
-// frontend/src/services/dragDropService.js
-import api from './api';
-import { dateUtils } from '../utils/dateUtils';
+// frontend/src/services/dragDropService.js (Complete implementation)
+import calendarService from './calendarService';
 
 class DragDropService {
   constructor() {
     this.pendingOperations = new Map();
-    this.conflictCache = new Map();
   }
 
   // Validate if a drag/drop operation is allowed
   async validateDragDrop(episodeId, newStartTime, newEndTime, facilityId) {
-    const cacheKey = `${episodeId}-${newStartTime}-${newEndTime}`;
-    
-    // Check cache first
-    if (this.conflictCache.has(cacheKey)) {
-      return this.conflictCache.get(cacheKey);
-    }
-
     try {
-      const response = await api.post('/api/episodes/validate-move', {
-        episode_id: episodeId,
-        new_start_time: newStartTime,
-        new_end_time: newEndTime,
-        facility_id: facilityId
-      });
+      const result = await calendarService.validateEpisodeMove(
+        episodeId, 
+        newStartTime, 
+        newEndTime, 
+        facilityId
+      );
 
-      const result = {
-        isValid: response.data.valid,
-        conflicts: response.data.conflicts || [],
-        warnings: response.data.warnings || [],
-        businessRuleViolations: response.data.businessRuleViolations || []
-      };
-
-      // Cache the result for 30 seconds
-      this.conflictCache.set(cacheKey, result);
-      setTimeout(() => this.conflictCache.delete(cacheKey), 30000);
-
-      return result;
+      if (result.success) {
+        return {
+          isValid: result.data.isValid,
+          conflicts: result.data.conflicts || [],
+          warnings: result.data.warnings || [],
+          businessRuleViolations: result.data.businessRuleViolations || []
+        };
+      } else {
+        return {
+          isValid: false,
+          conflicts: [{
+            type: 'validation_error',
+            severity: 'error',
+            title: 'Validation Error',
+            description: result.error || 'Unable to validate move'
+          }],
+          warnings: [],
+          businessRuleViolations: [result.error || 'Validation failed']
+        };
+      }
     } catch (error) {
       console.error('Validation error:', error);
       return {
         isValid: false,
-        conflicts: [],
+        conflicts: [{
+          type: 'validation_error',
+          severity: 'error',
+          title: 'Validation Error',
+          description: 'Unable to validate move'
+        }],
         warnings: [],
         businessRuleViolations: ['Validation service unavailable']
       };
     }
   }
 
-  // Handle episode move with optimistic updates
+  // Handle episode move with proper error handling
   async moveEpisode(moveData) {
     const { episodeId, newStartTime, newEndTime, revert } = moveData;
     const operationId = `move-${episodeId}-${Date.now()}`;
@@ -58,55 +62,32 @@ class DragDropService {
       this.pendingOperations.set(operationId, {
         type: 'move',
         episodeId,
-        originalData: moveData.originalEvent,
         revert
       });
 
-      // Validate the move
-      const validation = await this.validateDragDrop(
-        episodeId, 
-        newStartTime, 
-        newEndTime,
-        moveData.facilityId
+      // Perform the actual update using the calendar service
+      const result = await calendarService.moveEpisode(
+        episodeId,
+        newStartTime,
+        newEndTime
       );
 
-      if (!validation.isValid) {
-        throw new Error(validation.businessRuleViolations[0] || 'Invalid move');
-      }
-
-      // Show warnings if any
-      if (validation.warnings.length > 0) {
-        const confirmed = await this.showConflictDialog({
-          type: 'warning',
-          title: 'Move Confirmation',
-          message: 'This move has potential issues:',
-          details: validation.warnings,
-          confirmText: 'Move Anyway'
-        });
-
-        if (!confirmed) {
-          revert();
-          this.pendingOperations.delete(operationId);
-          return { success: false, cancelled: true };
-        }
-      }
-
-      // Calculate new duration
-      const duration = Math.round((new Date(newEndTime) - new Date(newStartTime)) / (1000 * 60));
-
-      // Perform the actual update
-      const response = await api.put(`/api/episodes/${episodeId}`, {
-        episode_start_date_time: newStartTime,
-        episode_end_date_time: newEndTime,
-        episode_duration: duration
-      });
-
       this.pendingOperations.delete(operationId);
-      return { 
-        success: true, 
-        data: response.data,
-        message: 'Ice time moved successfully'
-      };
+
+      if (result.success) {
+        return { 
+          success: true, 
+          data: result.data,
+          message: 'Ice time moved successfully'
+        };
+      } else {
+        // Rollback the UI change
+        revert();
+        return {
+          success: false,
+          error: result.error || 'Failed to move ice time'
+        };
+      }
 
     } catch (error) {
       console.error('Move episode error:', error);
@@ -117,14 +98,14 @@ class DragDropService {
 
       return {
         success: false,
-        error: error.response?.data?.message || error.message || 'Failed to move ice time'
+        error: 'Failed to move ice time'
       };
     }
   }
 
-  // Handle episode resize with optimistic updates
+  // Handle episode resize with proper error handling
   async resizeEpisode(resizeData) {
-    const { episodeId, newEndTime, newDuration, revert } = resizeData;
+    const { episodeId, newEndTime, revert } = resizeData;
     const operationId = `resize-${episodeId}-${Date.now()}`;
 
     try {
@@ -132,49 +113,40 @@ class DragDropService {
       this.pendingOperations.set(operationId, {
         type: 'resize',
         episodeId,
-        originalEnd: resizeData.originalEnd,
         revert
       });
 
-      // Get current episode data for validation
-      const currentEpisode = await this.getCurrentEpisodeData(episodeId);
-      if (!currentEpisode) {
-        throw new Error('Episode not found');
-      }
-
-      // Validate the resize
-      const validation = await this.validateDragDrop(
+      // Perform the actual update using the calendar service
+      const result = await calendarService.resizeEpisode(
         episodeId,
-        currentEpisode.episode_start_date_time,
-        newEndTime,
-        currentEpisode.facilityId
+        newEndTime
       );
 
-      if (!validation.isValid) {
-        throw new Error(validation.businessRuleViolations[0] || 'Invalid resize');
-      }
-
-      // Check for duration limits
-      if (newDuration < 30) {
-        throw new Error('Ice time must be at least 30 minutes long');
-      }
-
-      if (newDuration > 240) {
-        throw new Error('Ice time cannot exceed 4 hours');
-      }
-
-      // Perform the actual update
-      const response = await api.put(`/api/episodes/${episodeId}`, {
-        episode_end_date_time: newEndTime,
-        episode_duration: newDuration
-      });
-
       this.pendingOperations.delete(operationId);
-      return { 
-        success: true, 
-        data: response.data,
-        message: `Ice time duration updated to ${newDuration} minutes`
-      };
+
+      if (result.success) {
+        // Calculate duration for message
+        const episodeResult = await calendarService.getEpisodeById(episodeId);
+        let duration = 'updated';
+        if (episodeResult.success) {
+          const startTime = new Date(episodeResult.data.episode.episode_start_date_time);
+          const endTime = new Date(newEndTime);
+          duration = Math.round((endTime - startTime) / (1000 * 60));
+        }
+
+        return { 
+          success: true, 
+          data: result.data,
+          message: `Ice time duration updated to ${duration} minutes`
+        };
+      } else {
+        // Rollback the UI change
+        revert();
+        return {
+          success: false,
+          error: result.error || 'Failed to resize ice time'
+        };
+      }
 
     } catch (error) {
       console.error('Resize episode error:', error);
@@ -185,54 +157,21 @@ class DragDropService {
 
       return {
         success: false,
-        error: error.response?.data?.message || error.message || 'Failed to resize ice time'
+        error: 'Failed to resize ice time'
       };
-    }
-  }
-
-  // Get current episode data for validation
-  async getCurrentEpisodeData(episodeId) {
-    try {
-      const response = await api.get(`/api/episodes/${episodeId}`);
-      return response.data.episode;
-    } catch (error) {
-      console.error('Failed to get episode data:', error);
-      return null;
     }
   }
 
   // Check if operation can be performed
   canPerformOperation(event, operationType = 'move') {
-    const status = event.extendedProps?.status;
-    const startTime = new Date(event.start);
-    
-    // Cannot edit past events
-    if (startTime < new Date()) {
-      return { allowed: false, reason: 'Cannot modify past ice time' };
-    }
-    
-    // Cannot edit booked events
-    if (status === 'booked') {
-      return { allowed: false, reason: 'Cannot modify booked ice time' };
-    }
-    
-    // Cannot edit if it has active bookings
-    if (event.extendedProps?.hasBookings) {
-      return { allowed: false, reason: 'Cannot modify ice time with active bookings' };
-    }
-
-    // Check for maintenance status
-    if (status === 'maintenance') {
-      return { allowed: false, reason: 'Cannot modify maintenance periods' };
-    }
-
-    return { allowed: true };
+    const editCheck = calendarService.canEditEpisode(event);
+    return editCheck;
   }
 
-  // Show conflict dialog (to be implemented with a modal component)
+  // Show conflict dialog (placeholder for modal integration)
   async showConflictDialog(options) {
     return new Promise((resolve) => {
-      // This would trigger a modal component
+      // This would trigger a modal component in a full implementation
       // For now, using browser confirm as fallback
       const message = `${options.message}\n\n${options.details.join('\n')}\n\nContinue?`;
       resolve(window.confirm(message));
@@ -242,7 +181,6 @@ class DragDropService {
   // Cleanup pending operations (call on component unmount)
   cleanup() {
     this.pendingOperations.clear();
-    this.conflictCache.clear();
   }
 
   // Get pending operations count
@@ -264,19 +202,21 @@ class DragDropService {
   // Batch validation for multiple moves
   async validateBatchMoves(moves) {
     try {
-      const response = await api.post('/api/episodes/validate-batch-moves', {
-        moves: moves.map(move => ({
-          episode_id: move.episodeId,
-          new_start_time: move.newStartTime,
-          new_end_time: move.newEndTime
-        }))
-      });
-
-      return {
-        isValid: response.data.valid,
-        results: response.data.results || [],
-        overallConflicts: response.data.overallConflicts || []
-      };
+      const result = await calendarService.validateBatchMoves(moves);
+      
+      if (result.success) {
+        return {
+          isValid: result.data.isValid,
+          results: result.data.results || [],
+          overallConflicts: result.data.overallConflicts || []
+        };
+      } else {
+        return {
+          isValid: false,
+          results: [],
+          overallConflicts: ['Batch validation service unavailable']
+        };
+      }
     } catch (error) {
       console.error('Batch validation error:', error);
       return {
@@ -344,6 +284,142 @@ class DragDropService {
       isOptimal: false,
       adjustmentReason: 'Adjusted to fit business hours'
     };
+  }
+
+  // Validate move against business rules
+  async validateBusinessRules(episodeId, newStartTime, newEndTime) {
+    const violations = [];
+    const warnings = [];
+
+    try {
+      // Check if moving to past
+      if (new Date(newStartTime) < new Date()) {
+        violations.push({
+          type: 'past_date',
+          severity: 'error',
+          title: 'Past Date',
+          description: 'Cannot move ice time to the past'
+        });
+      }
+
+      // Duration validation
+      const duration = Math.round((new Date(newEndTime) - new Date(newStartTime)) / (1000 * 60));
+      
+      if (duration < 30) {
+        violations.push({
+          type: 'duration_too_short',
+          severity: 'error',
+          title: 'Duration Too Short',
+          description: 'Ice time must be at least 30 minutes long'
+        });
+      }
+
+      if (duration > 480) {
+        violations.push({
+          type: 'duration_too_long',
+          severity: 'error',
+          title: 'Duration Too Long',
+          description: 'Ice time cannot exceed 8 hours'
+        });
+      }
+
+      // Warning for very long durations
+      if (duration > 240 && duration <= 480) {
+        warnings.push({
+          type: 'duration_long',
+          severity: 'warning',
+          title: 'Long Duration',
+          description: 'This is a very long ice time slot'
+        });
+      }
+
+    } catch (error) {
+      console.error('Business rules validation error:', error);
+      violations.push({
+        type: 'validation_error',
+        severity: 'error',
+        title: 'Validation Error',
+        description: 'Unable to validate business rules'
+      });
+    }
+
+    return { violations, warnings };
+  }
+
+  // Check for cross-episode conflicts in batch moves
+  checkCrossEpisodeConflicts(moves) {
+    const conflicts = [];
+
+    // Sort moves by start time
+    const sortedMoves = [...moves].sort((a, b) => 
+      new Date(a.newStartTime) - new Date(b.newStartTime)
+    );
+
+    // Check each pair for overlaps
+    for (let i = 0; i < sortedMoves.length - 1; i++) {
+      for (let j = i + 1; j < sortedMoves.length; j++) {
+        const move1 = sortedMoves[i];
+        const move2 = sortedMoves[j];
+
+        // Only check if they're on the same resource
+        if (move1.resourceId === move2.resourceId) {
+          const overlap = this.checkTimeOverlap(
+            move1.newStartTime, move1.newEndTime,
+            move2.newStartTime, move2.newEndTime
+          );
+
+          if (overlap) {
+            conflicts.push({
+              type: 'batch_overlap',
+              severity: 'error',
+              title: 'Batch Move Conflict',
+              description: `Episodes ${move1.episodeId} and ${move2.episodeId} would overlap`,
+              episodes: [move1.episodeId, move2.episodeId]
+            });
+          }
+        }
+      }
+    }
+
+    return conflicts;
+  }
+
+  // Check if two time ranges overlap
+  checkTimeOverlap(start1, end1, start2, end2) {
+    const s1 = new Date(start1);
+    const e1 = new Date(end1);
+    const s2 = new Date(start2);
+    const e2 = new Date(end2);
+
+    return s1 < e2 && s2 < e1;
+  }
+
+  // Get operation status
+  getOperationStatus(operationId) {
+    return this.pendingOperations.has(operationId) ? 'pending' : 'completed';
+  }
+
+  // Handle optimistic updates
+  async handleOptimisticUpdate(updateFunction, rollbackFunction) {
+    try {
+      // Apply optimistic update
+      updateFunction();
+      
+      // Attempt actual update
+      const result = await this.performUpdate();
+      
+      if (!result.success) {
+        // Rollback on failure
+        rollbackFunction();
+        throw new Error(result.error);
+      }
+      
+      return result;
+    } catch (error) {
+      // Ensure rollback on any error
+      rollbackFunction();
+      throw error;
+    }
   }
 }
 

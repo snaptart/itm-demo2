@@ -1,11 +1,9 @@
-// frontend/src/pages/CalendarPage.jsx (Enhanced with Drag-Drop)
+// frontend/src/pages/CalendarPage.jsx (Fixed with proper drag-drop handling)
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CalendarView from '../components/calendar/CalendarView/CalendarView';
 import CalendarSidebar from '../components/calendar/CalendarSidebar/CalendarSidebar';
 import EventModal from '../components/calendar/EventModal/EventModal';
 import CreateEventModal from '../components/calendar/CreateEventModal/CreateEventModal';
-import DragDropConfirmModal from '../components/calendar/DragDropConfirmModal/DragDropConfirmModal';
-import ConflictModal from '../components/common/ConflictModal/ConflictModal';
 import LoadingSpinner from '../components/common/LoadingSpinner/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage/ErrorMessage';
 import { ToastContainer, useToast } from '../components/common/Toast/Toast';
@@ -14,7 +12,6 @@ import dragDropService from '../services/dragDropService';
 import facilityService from '../services/facilityService';
 import resourceService from '../services/resourceService';
 import authService from '../services/authService';
-import { dateUtils } from '../utils/dateUtils';
 import './CalendarPage.css';
 
 function CalendarPage() {
@@ -28,17 +25,11 @@ function CalendarPage() {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [showEventModal, setShowEventModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showDragDropModal, setShowDragDropModal] = useState(false);
-  const [showConflictModal, setShowConflictModal] = useState(false);
   const [selectedDateForCreate, setSelectedDateForCreate] = useState(null);
   const [calendarView, setCalendarView] = useState('month');
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  
-  // Drag and drop state
-  const [pendingMove, setPendingMove] = useState(null);
-  const [conflictData, setConflictData] = useState(null);
   
   // Toast notifications
   const { toasts, addToast, removeToast, success, error: errorToast, info, warning } = useToast();
@@ -285,64 +276,26 @@ function CalendarPage() {
     }
 
     try {
-      // Validate the move first
-      const validation = await calendarService.validateEpisodeMove(
-        moveData.episodeId,
-        moveData.newStartTime,
-        moveData.newEndTime,
-        selectedFacility?.facility_id
-      );
+      // Use the drag drop service to handle the move
+      const result = await dragDropService.moveEpisode({
+        episodeId: moveData.episodeId,
+        newStartTime: moveData.newStartTime,
+        newEndTime: moveData.newEndTime,
+        revert: moveData.revert
+      });
 
-      if (!validation.success) {
-        moveData.revert();
-        errorToast('Failed to validate move');
-        return;
+      if (result.success) {
+        success(result.message || 'Ice time moved successfully');
+        // Reload events to ensure consistency
+        await loadCalendarEvents();
+      } else {
+        errorToast(result.error || 'Failed to move ice time');
       }
-
-      const { isValid, conflicts, warnings } = validation.data;
-
-      // If there are conflicts, show conflict modal and revert
-      if (!isValid || conflicts.length > 0) {
-        moveData.revert();
-        setConflictData({
-          conflicts,
-          warnings,
-          title: 'Cannot Move Ice Time',
-          moveData
-        });
-        setShowConflictModal(true);
-        return;
-      }
-
-      // If only warnings, show confirmation modal
-      if (warnings.length > 0) {
-        const currentEvent = events.find(e => e.extendedProps.episodeId === moveData.episodeId);
-        const resourceName = resources.find(r => r.id === currentEvent?.resourceId)?.title;
-        
-        setPendingMove({
-          ...moveData,
-          episodeTitle: currentEvent?.title,
-          originalStart: moveData.originalEvent.start,
-          originalEnd: moveData.originalEvent.end,
-          newStart: moveData.newStartTime,
-          newEnd: moveData.newEndTime,
-          resourceName,
-          facilityName: selectedFacility?.facility_name,
-          moveType: 'move',
-          warnings
-        });
-        
-        setShowDragDropModal(true);
-        return;
-      }
-
-      // No conflicts or warnings, proceed directly
-      await executeMoveEpisode(moveData);
       
     } catch (error) {
       moveData.revert();
-      errorToast('Failed to validate move');
-      console.error('Drop validation error:', error);
+      errorToast('Failed to move ice time');
+      console.error('Drop handling error:', error);
     }
   };
 
@@ -353,213 +306,35 @@ function CalendarPage() {
     }
 
     try {
-      // Get current episode data
-      const currentEvent = events.find(e => e.extendedProps.episodeId === resizeData.episodeId);
-      
-      // Validate the resize
-      const validation = await calendarService.validateEpisodeMove(
-        resizeData.episodeId,
-        currentEvent.start,
-        resizeData.newEndTime,
-        selectedFacility?.facility_id
-      );
-
-      if (!validation.success) {
-        resizeData.revert();
-        errorToast('Failed to validate resize');
-        return;
-      }
-
-      const { isValid, conflicts, warnings } = validation.data;
-
-      // If there are conflicts, show conflict modal and revert
-      if (!isValid || conflicts.length > 0) {
-        resizeData.revert();
-        setConflictData({
-          conflicts,
-          warnings,
-          title: 'Cannot Resize Ice Time',
-          resizeData
-        });
-        setShowConflictModal(true);
-        return;
-      }
-
-      // If only warnings, show confirmation modal
-      if (warnings.length > 0) {
-        const resourceName = resources.find(r => r.id === currentEvent?.resourceId)?.title;
-        
-        setPendingMove({
-          ...resizeData,
-          episodeTitle: currentEvent?.title,
-          originalStart: currentEvent.start,
-          originalEnd: resizeData.originalEnd,
-          newStart: currentEvent.start,
-          newEnd: resizeData.newEndTime,
-          resourceName,
-          facilityName: selectedFacility?.facility_name,
-          moveType: 'resize',
-          warnings
-        });
-        
-        setShowDragDropModal(true);
-        return;
-      }
-
-      // No conflicts or warnings, proceed directly
-      await executeResizeEpisode(resizeData);
-      
-    } catch (error) {
-      resizeData.revert();
-      errorToast('Failed to validate resize');
-      console.error('Resize validation error:', error);
-    }
-  };
-
-  const executeMoveEpisode = async (moveData) => {
-    try {
-      const result = await calendarService.moveEpisode(
-        moveData.episodeId,
-        moveData.newStartTime,
-        moveData.newEndTime
-      );
+      // Use the drag drop service to handle the resize
+      const result = await dragDropService.resizeEpisode({
+        episodeId: resizeData.episodeId,
+        newEndTime: resizeData.newEndTime,
+        revert: resizeData.revert
+      });
 
       if (result.success) {
-        success('Ice time moved successfully');
+        success(result.message || 'Ice time resized successfully');
         // Reload events to ensure consistency
         await loadCalendarEvents();
       } else {
-        moveData.revert();
-        errorToast(result.error);
+        errorToast(result.error || 'Failed to resize ice time');
       }
-    } catch (error) {
-      moveData.revert();
-      errorToast('Failed to move ice time');
-      console.error('Move episode error:', error);
-    }
-  };
-
-  const executeResizeEpisode = async (resizeData) => {
-    try {
-      const result = await calendarService.resizeEpisode(
-        resizeData.episodeId,
-        resizeData.newEndTime
-      );
-
-      if (result.success) {
-        success(`Ice time duration updated to ${resizeData.newDuration} minutes`);
-        // Reload events to ensure consistency
-        await loadCalendarEvents();
-      } else {
-        resizeData.revert();
-        errorToast(result.error);
-      }
+      
     } catch (error) {
       resizeData.revert();
       errorToast('Failed to resize ice time');
-      console.error('Resize episode error:', error);
+      console.error('Resize handling error:', error);
     }
   };
 
-  const handleDragDropConfirm = async () => {
-    if (!pendingMove) return;
-
-    setShowDragDropModal(false);
-    
-    if (pendingMove.moveType === 'resize') {
-      await executeResizeEpisode(pendingMove);
-    } else {
-      await executeMoveEpisode(pendingMove);
-    }
-    
-    setPendingMove(null);
-  };
-
-  const handleDragDropCancel = () => {
-    if (pendingMove && pendingMove.revert) {
-      pendingMove.revert();
-    }
-    setShowDragDropModal(false);
-    setPendingMove(null);
-  };
-
-  const handleConflictModalClose = () => {
-    setShowConflictModal(false);
-    setConflictData(null);
-  };
-
-  // Optimistic update handlers
+  // Event success and error handlers
   const handleEventSuccess = (message) => {
     success(message);
   };
 
   const handleEventError = (message) => {
     errorToast(message);
-  };
-
-  // Optimistic delete with rollback
-  const optimisticDelete = async (episodeId) => {
-    // Store current events for rollback
-    const previousEvents = [...eventsRef.current];
-    
-    // Optimistically remove the event
-    setEvents(prev => prev.filter(e => e.extendedProps.episodeId !== episodeId));
-    
-    try {
-      const result = await calendarService.deleteEpisode(episodeId);
-      if (!result.success) {
-        // Rollback on failure
-        setEvents(previousEvents);
-        throw new Error(result.error || 'Failed to delete episode');
-      }
-      success('Ice time deleted successfully');
-    } catch (err) {
-      // Rollback on error
-      setEvents(previousEvents);
-      errorToast(err.message || 'Failed to delete ice time');
-      throw err;
-    }
-  };
-
-  // Optimistic update with rollback
-  const optimisticUpdate = async (episodeId, updateData) => {
-    // Store current events for rollback
-    const previousEvents = [...eventsRef.current];
-    
-    // Optimistically update the event
-    setEvents(prev => prev.map(event => {
-      if (event.extendedProps.episodeId === episodeId) {
-        return {
-          ...event,
-          title: updateData.episode_title || event.title,
-          extendedProps: {
-            ...event.extendedProps,
-            status: updateData.episode_status || event.extendedProps.status,
-            price: updateData.episode_price ? `${updateData.episode_price}` : event.extendedProps.price
-          },
-          backgroundColor: calendarService.getStatusColorMap()[updateData.episode_status] || event.backgroundColor,
-          borderColor: calendarService.getStatusColorMap()[updateData.episode_status] || event.borderColor
-        };
-      }
-      return event;
-    }));
-    
-    try {
-      const result = await calendarService.updateEpisode(episodeId, updateData);
-      if (!result.success) {
-        // Rollback on failure
-        setEvents(previousEvents);
-        throw new Error(result.error || 'Failed to update episode');
-      }
-      success('Ice time updated successfully');
-      // Reload to get fresh data
-      await loadCalendarEvents();
-    } catch (err) {
-      // Rollback on error
-      setEvents(previousEvents);
-      errorToast(err.message || 'Failed to update ice time');
-      throw err;
-    }
   };
 
   if (loading) {
@@ -644,8 +419,6 @@ function CalendarPage() {
           onSuccess={handleEventSuccess}
           onError={handleEventError}
           calendarService={calendarService}
-          onOptimisticUpdate={optimisticUpdate}
-          onOptimisticDelete={optimisticDelete}
         />
       )}
 
@@ -659,29 +432,6 @@ function CalendarPage() {
           facility={selectedFacility}
           calendarService={calendarService}
           resourceService={resourceService}
-        />
-      )}
-
-      {showDragDropModal && pendingMove && (
-        <DragDropConfirmModal
-          isOpen={showDragDropModal}
-          onClose={handleDragDropCancel}
-          onConfirm={handleDragDropConfirm}
-          moveData={pendingMove}
-          loading={false}
-        />
-      )}
-
-      {showConflictModal && conflictData && (
-        <ConflictModal
-          isOpen={showConflictModal}
-          onClose={handleConflictModalClose}
-          onConfirm={() => {}}
-          conflicts={conflictData.conflicts}
-          warnings={conflictData.warnings}
-          title={conflictData.title}
-          confirmText="OK"
-          loading={false}
         />
       )}
 
