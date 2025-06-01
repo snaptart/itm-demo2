@@ -1,4 +1,4 @@
-// frontend/src/components/calendar/CreateEventModal/CreateEventModal.jsx (Enhanced with Timezone)
+// frontend/src/components/calendar/CreateEventModal/CreateEventModal.jsx (Fixed with Synchronized Times)
 import React, { useState, useEffect, useMemo } from 'react';
 import { dateUtils } from '../../../utils/dateUtils';
 import './CreateEventModal.css';
@@ -42,48 +42,55 @@ function CreateEventModal({
     generate_episodes: true
   });
 
-  // Computed values with timezone awareness
+  // FIXED: Computed values with consistent time handling
   const computedValues = useMemo(() => {
     if (!formData.event_date || !formData.start_time || !formData.end_time) {
       return null;
     }
 
-    const startDateTime = dateUtils.createFacilityDateTime(
-      formData.event_date, 
-      formData.start_time, 
-      facilityTimezone
-    );
-    const endDateTime = dateUtils.createFacilityDateTime(
-      formData.event_date, 
-      formData.end_time, 
-      facilityTimezone
-    );
+    try {
+      // Create datetime objects using the fixed dateUtils function
+      const startDateTime = dateUtils.createFacilityDateTime(
+        formData.event_date, 
+        formData.start_time, 
+        facilityTimezone
+      );
+      const endDateTime = dateUtils.createFacilityDateTime(
+        formData.event_date, 
+        formData.end_time, 
+        facilityTimezone
+      );
 
-    if (!startDateTime || !endDateTime) {
+      if (!startDateTime || !endDateTime) {
+        return null;
+      }
+
+      const duration = dateUtils.getDuration(startDateTime, endDateTime);
+      const isValidRange = endDateTime > startDateTime;
+      const isPast = dateUtils.isPast(startDateTime, facilityTimezone);
+      
+      return {
+        startDateTime,
+        endDateTime,
+        duration,
+        isValidRange,
+        isPast,
+        // FIXED: Use consistent formatting for display
+        displayStart: dateUtils.formatForDisplay(startDateTime, facilityTimezone, {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        }),
+        displayEnd: dateUtils.formatTimeOnly(endDateTime, facilityTimezone),
+        timezoneDisplay: dateUtils.getTimezoneDisplayName(facilityTimezone)
+      };
+    } catch (error) {
+      console.error('Error computing values:', error);
       return null;
     }
-
-    const duration = dateUtils.getDuration(startDateTime, endDateTime);
-    const isValidRange = endDateTime > startDateTime;
-    const isPast = dateUtils.isPast(startDateTime, facilityTimezone);
-    
-    return {
-      startDateTime,
-      endDateTime,
-      duration,
-      isValidRange,
-      isPast,
-      displayStart: dateUtils.formatForDisplay(startDateTime, facilityTimezone, {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      }),
-      displayEnd: dateUtils.formatTimeOnly(endDateTime, facilityTimezone),
-      timezoneDisplay: dateUtils.getTimezoneDisplayName(facilityTimezone)
-    };
   }, [formData.event_date, formData.start_time, formData.end_time, facilityTimezone]);
 
   useEffect(() => {
@@ -285,13 +292,13 @@ function CreateEventModal({
         return false;
       }
       
-      const repeatEnd = dateUtils.createFacilityDateTime(
+      const repeatEndDateTime = dateUtils.createFacilityDateTime(
         formData.repeat_end_date,
         '23:59',
         facilityTimezone
       );
       
-      if (repeatEnd <= computedValues.startDateTime) {
+      if (repeatEndDateTime <= computedValues.startDateTime) {
         setError('Repeat end date must be after the start date');
         return false;
       }
@@ -314,9 +321,10 @@ function CreateEventModal({
       setLoading(true);
       setError('');
       
-      // Prepare event data with timezone-aware conversion
+      // FIXED: Prepare event data with proper datetime formatting
       const eventData = {
         resource_id: parseInt(formData.resource_id),
+        // Use the computed datetime objects directly
         event_start_date_time: dateUtils.formatForAPI(computedValues.startDateTime),
         event_end_date_time: dateUtils.formatForAPI(computedValues.endDateTime),
         episode_duration: parseInt(formData.episode_duration),
@@ -324,6 +332,10 @@ function CreateEventModal({
         generate_episodes: formData.generate_episodes,
         facility_timezone: facilityTimezone
       };
+      
+      console.log('Submitting event data:', eventData);
+      console.log('Start DateTime:', computedValues.startDateTime);
+      console.log('End DateTime:', computedValues.endDateTime);
       
       // Add recurring event data if applicable
       if (formData.repeat_mode !== 'once') {
@@ -483,7 +495,7 @@ function CreateEventModal({
                 </div>
               </div>
 
-              {/* Time Preview */}
+              {/* FIXED: Time Preview with synchronized display */}
               {computedValues && (
                 <div className="time-preview">
                   <div className="preview-header">
@@ -500,6 +512,9 @@ function CreateEventModal({
                     {computedValues.isPast && (
                       <div className="preview-warning">⚠️ This time is in the past</div>
                     )}
+                    <div className="debug-info" style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+                      Debug: {formData.event_date} {formData.start_time} - {formData.end_time}
+                    </div>
                   </div>
                 </div>
               )}

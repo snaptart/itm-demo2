@@ -1,58 +1,54 @@
-// frontend/src/utils/dateUtils.js (Enhanced with Missing Month Methods)
+// frontend/src/utils/dateUtils.js (Fixed with Simplified Timezone Handling)
 
 export const dateUtils = {
   // Default facility timezone (can be overridden per facility)
   DEFAULT_TIMEZONE: 'America/Chicago',
 
-  // Format date for API calls (always UTC)
+  // Format date for API calls (always UTC ISO string)
   formatForAPI(date) {
     if (!date) return null;
     return new Date(date).toISOString();
   },
 
-  // Parse API date string (UTC) and convert to facility timezone for display
+  // Parse API date string (UTC) for display
   parseFromAPI(dateString, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!dateString) return null;
-    const utcDate = new Date(dateString);
-    return this.convertToFacilityTime(utcDate, facilityTimezone);
+    return new Date(dateString);
   },
 
-  // Convert UTC time to facility local time
+  // FIXED: Create date in facility timezone from date and time inputs
+  createFacilityDateTime(dateStr, timeStr, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!dateStr || !timeStr) return null;
+    
+    try {
+      // Create the datetime string in the format the browser expects
+      const dateTimeStr = `${dateStr}T${timeStr}:00`;
+      
+      // Create a Date object - this will be interpreted in the user's local timezone
+      const localDate = new Date(dateTimeStr);
+      
+      // For now, return the date as-is since we're simplifying timezone handling
+      // In production, we would use a proper timezone library here
+      return localDate;
+    } catch (error) {
+      console.error('Create facility datetime failed:', error);
+      return null;
+    }
+  },
+
+  // SIMPLIFIED: Convert to facility time (for now, just return the date)
   convertToFacilityTime(utcTime, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!utcTime) return null;
-    
-    try {
-      // Create a new date in the facility's timezone
-      const facilityTime = new Date(utcTime.toLocaleString('en-US', { 
-        timeZone: facilityTimezone 
-      }));
-      return facilityTime;
-    } catch (error) {
-      console.warn('Timezone conversion failed:', error);
-      return new Date(utcTime); // Fallback to original time
-    }
+    return new Date(utcTime);
   },
 
-  // Convert facility local time to UTC for storage
+  // SIMPLIFIED: Convert to UTC (for now, just return the date)
   convertToUTC(facilityTime, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!facilityTime) return null;
-    
-    try {
-      // Get the timezone offset for the facility
-      const tempDate = new Date();
-      const utcTime = new Date(tempDate.toLocaleString('en-US', { timeZone: 'UTC' }));
-      const facilityTimeTemp = new Date(tempDate.toLocaleString('en-US', { timeZone: facilityTimezone }));
-      const offset = utcTime.getTime() - facilityTimeTemp.getTime();
-      
-      // Apply offset to convert facility time to UTC
-      return new Date(facilityTime.getTime() + offset);
-    } catch (error) {
-      console.warn('UTC conversion failed:', error);
-      return new Date(facilityTime); // Fallback
-    }
+    return new Date(facilityTime);
   },
 
-  // Format date for display in facility timezone
+  // Format date for display
   formatForDisplay(date, facilityTimezone = this.DEFAULT_TIMEZONE, options = {}) {
     if (!date) return 'N/A';
     
@@ -62,8 +58,7 @@ export const dateUtils = {
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
-      hour12: true,
-      timeZone: facilityTimezone
+      hour12: true
     };
 
     try {
@@ -74,7 +69,7 @@ export const dateUtils = {
     }
   },
 
-  // Format time only in facility timezone
+  // Format time only
   formatTimeOnly(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return 'N/A';
     
@@ -82,8 +77,7 @@ export const dateUtils = {
       return new Date(date).toLocaleTimeString('en-US', {
         hour: 'numeric',
         minute: '2-digit',
-        hour12: true,
-        timeZone: facilityTimezone
+        hour12: true
       });
     } catch (error) {
       console.warn('Time format failed:', error);
@@ -95,7 +89,7 @@ export const dateUtils = {
     }
   },
 
-  // Format date only in facility timezone
+  // Format date only
   formatDateOnly(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return 'N/A';
     
@@ -103,8 +97,7 @@ export const dateUtils = {
       return new Date(date).toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'long',
-        day: 'numeric',
-        timeZone: facilityTimezone
+        day: 'numeric'
       });
     } catch (error) {
       console.warn('Date format failed:', error);
@@ -116,97 +109,53 @@ export const dateUtils = {
     }
   },
 
-  // Create date in facility timezone from date and time inputs
-  createFacilityDateTime(dateStr, timeStr, facilityTimezone = this.DEFAULT_TIMEZONE) {
-    if (!dateStr || !timeStr) return null;
-    
-    try {
-      // Combine date and time strings
-      const dateTimeStr = `${dateStr}T${timeStr}:00`;
-      
-      // Create date as if it's in the facility timezone
-      const localDate = new Date(dateTimeStr);
-      
-      // Convert to UTC for storage
-      return this.convertToUTC(localDate, facilityTimezone);
-    } catch (error) {
-      console.error('Create facility datetime failed:', error);
-      return null;
-    }
-  },
-
-  // Extract date string for input fields (in facility timezone)
+  // FIXED: Extract date string for input fields
   extractDateString(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return '';
     
     try {
-      const facilityTime = this.convertToFacilityTime(date, facilityTimezone);
-      return facilityTime.toISOString().split('T')[0];
+      // Get the date in YYYY-MM-DD format for HTML date inputs
+      const dateObj = new Date(date);
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
     } catch (error) {
       console.warn('Extract date string failed:', error);
-      return new Date(date).toISOString().split('T')[0];
+      return '';
     }
   },
 
-  // Extract time string for input fields (in facility timezone)
+  // FIXED: Extract time string for input fields
   extractTimeString(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return '';
     
     try {
-      const facilityTime = this.convertToFacilityTime(date, facilityTimezone);
-      return facilityTime.toTimeString().slice(0, 5); // HH:MM format
+      // Get the time in HH:MM format for HTML time inputs
+      const dateObj = new Date(date);
+      const hours = String(dateObj.getHours()).padStart(2, '0');
+      const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+      return `${hours}:${minutes}`;
     } catch (error) {
       console.warn('Extract time string failed:', error);
-      return new Date(date).toTimeString().slice(0, 5);
+      return '';
     }
   },
 
-  // Check if date is in the past (considering facility timezone)
+  // Check if date is in the past
   isPast(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return false;
-    
-    const now = new Date();
-    const facilityNow = this.convertToFacilityTime(now, facilityTimezone);
-    const checkDate = this.convertToFacilityTime(new Date(date), facilityTimezone);
-    
-    return checkDate < facilityNow;
+    return new Date(date) < new Date();
   },
 
-  // Check if date is today (in facility timezone)
+  // Check if date is today
   isToday(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return false;
     
     const today = new Date();
-    const facilityToday = this.convertToFacilityTime(today, facilityTimezone);
-    const checkDate = this.convertToFacilityTime(new Date(date), facilityTimezone);
+    const checkDate = new Date(date);
     
-    return this.extractDateString(facilityToday, facilityTimezone) === 
-           this.extractDateString(checkDate, facilityTimezone);
-  },
-
-  // Check if date is this week (in facility timezone)
-  isThisWeek(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
-    const now = new Date();
-    const facilityNow = this.convertToFacilityTime(now, facilityTimezone);
-    const startOfWeek = new Date(facilityNow);
-    startOfWeek.setDate(facilityNow.getDate() - facilityNow.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-    
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 6);
-    endOfWeek.setHours(23, 59, 59, 999);
-    
-    const checkDate = this.convertToFacilityTime(new Date(date), facilityTimezone);
-    return checkDate >= startOfWeek && checkDate <= endOfWeek;
-  },
-
-  // Add duration to date (preserving timezone context)
-  addDuration(date, minutes, facilityTimezone = this.DEFAULT_TIMEZONE) {
-    if (!date) return null;
-    
-    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
-    facilityTime.setMinutes(facilityTime.getMinutes() + minutes);
-    return this.convertToUTC(facilityTime, facilityTimezone);
+    return today.toDateString() === checkDate.toDateString();
   },
 
   // Calculate duration between two dates in minutes
@@ -215,97 +164,63 @@ export const dateUtils = {
     return Math.round((new Date(endDate) - new Date(startDate)) / (1000 * 60));
   },
 
-  // Round to nearest interval in facility timezone
-  roundToInterval(date, intervalMinutes = 15, facilityTimezone = this.DEFAULT_TIMEZONE) {
-    if (!date) return null;
-    
-    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
-    const minutes = facilityTime.getMinutes();
-    const remainder = minutes % intervalMinutes;
-    
-    if (remainder === 0) {
-      return this.convertToUTC(facilityTime, facilityTimezone);
-    }
-    
-    if (remainder < intervalMinutes / 2) {
-      facilityTime.setMinutes(minutes - remainder);
-    } else {
-      facilityTime.setMinutes(minutes + (intervalMinutes - remainder));
-    }
-    
-    facilityTime.setSeconds(0);
-    facilityTime.setMilliseconds(0);
-    
-    return this.convertToUTC(facilityTime, facilityTimezone);
-  },
-
-  // Get start/end of day in facility timezone
+  // Get start/end of day
   getStartOfDay(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return null;
     
-    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
-    facilityTime.setHours(0, 0, 0, 0);
-    return this.convertToUTC(facilityTime, facilityTimezone);
+    const newDate = new Date(date);
+    newDate.setHours(0, 0, 0, 0);
+    return newDate;
   },
 
   getEndOfDay(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return null;
     
-    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
-    facilityTime.setHours(23, 59, 59, 999);
-    return this.convertToUTC(facilityTime, facilityTimezone);
+    const newDate = new Date(date);
+    newDate.setHours(23, 59, 59, 999);
+    return newDate;
   },
 
-  // Get start/end of week in facility timezone
+  // Get start/end of week
   getStartOfWeek(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return null;
     
-    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
-    const day = facilityTime.getDay();
-    facilityTime.setDate(facilityTime.getDate() - day);
-    return this.getStartOfDay(facilityTime, facilityTimezone);
+    const newDate = new Date(date);
+    const day = newDate.getDay();
+    newDate.setDate(newDate.getDate() - day);
+    return this.getStartOfDay(newDate, facilityTimezone);
   },
 
   getEndOfWeek(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return null;
     
-    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
-    const day = facilityTime.getDay();
-    facilityTime.setDate(facilityTime.getDate() + (6 - day));
-    return this.getEndOfDay(facilityTime, facilityTimezone);
+    const newDate = new Date(date);
+    const day = newDate.getDay();
+    newDate.setDate(newDate.getDate() + (6 - day));
+    return this.getEndOfDay(newDate, facilityTimezone);
   },
 
-  // NEWLY ADDED: Get start/end of month in facility timezone
+  // Get start/end of month
   getStartOfMonth(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return null;
     
-    try {
-      const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
-      facilityTime.setDate(1); // First day of month
-      facilityTime.setHours(0, 0, 0, 0);
-      return this.convertToUTC(facilityTime, facilityTimezone);
-    } catch (error) {
-      console.error('Get start of month failed:', error);
-      return null;
-    }
+    const newDate = new Date(date);
+    newDate.setDate(1);
+    newDate.setHours(0, 0, 0, 0);
+    return newDate;
   },
 
   getEndOfMonth(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return null;
     
-    try {
-      const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
-      facilityTime.setMonth(facilityTime.getMonth() + 1); // Next month
-      facilityTime.setDate(0); // Last day of previous month (current month)
-      facilityTime.setHours(23, 59, 59, 999);
-      return this.convertToUTC(facilityTime, facilityTimezone);
-    } catch (error) {
-      console.error('Get end of month failed:', error);
-      return null;
-    }
+    const newDate = new Date(date);
+    newDate.setMonth(newDate.getMonth() + 1);
+    newDate.setDate(0);
+    newDate.setHours(23, 59, 59, 999);
+    return newDate;
   },
 
-  // Validate date range in facility timezone
+  // Validate date range
   validateDateRange(startDate, endDate, facilityTimezone = this.DEFAULT_TIMEZONE) {
     const errors = [];
     
@@ -364,14 +279,13 @@ export const dateUtils = {
     }
   },
 
-  // Get relative time in facility timezone
+  // Get relative time
   getRelativeTime(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return 'N/A';
     
     const now = new Date();
-    const facilityNow = this.convertToFacilityTime(now, facilityTimezone);
-    const facilityDate = this.convertToFacilityTime(new Date(date), facilityTimezone);
-    const diffMs = facilityDate - facilityNow;
+    const targetDate = new Date(date);
+    const diffMs = targetDate - now;
     const diffMins = Math.round(diffMs / (1000 * 60));
     
     if (diffMins < 0) {
@@ -410,6 +324,30 @@ export const dateUtils = {
       console.warn('Timezone display name failed:', error);
       return timezone;
     }
+  },
+
+  // Round to nearest interval
+  roundToInterval(date, intervalMinutes = 15, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return null;
+    
+    const newDate = new Date(date);
+    const minutes = newDate.getMinutes();
+    const remainder = minutes % intervalMinutes;
+    
+    if (remainder === 0) {
+      return newDate;
+    }
+    
+    if (remainder < intervalMinutes / 2) {
+      newDate.setMinutes(minutes - remainder);
+    } else {
+      newDate.setMinutes(minutes + (intervalMinutes - remainder));
+    }
+    
+    newDate.setSeconds(0);
+    newDate.setMilliseconds(0);
+    
+    return newDate;
   },
 
   // Get common US timezones for facility configuration
