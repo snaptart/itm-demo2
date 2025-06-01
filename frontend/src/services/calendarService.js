@@ -1,4 +1,3 @@
-<!-- frontend/src/services/calendarService.js -->
 import api from './api';
 
 // Retry configuration

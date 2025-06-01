@@ -14,6 +14,8 @@ function CalendarView({
   onViewChange, 
   onDateChange, 
   onEventClick,
+  onDateClick,
+  onDateSelect,
   isAdmin 
 }) {
   const calendarRef = useRef(null);
@@ -136,6 +138,10 @@ function CalendarView({
         eventContent={renderEventContent}
         datesSet={handleDatesSet}
         viewDidMount={handleViewDidMount}
+        dateClick={onDateClick}
+        select={onDateSelect}
+        selectable={isAdmin}
+        selectMirror={true}
         height="100%"
         nowIndicator={true}
         slotMinTime="06:00:00"
@@ -165,7 +171,6 @@ function CalendarView({
               month: 'short',
               day: 'numeric'
             },
-            listDayAltFormat: false,
             noEventsText: 'No ice time scheduled'
           },
           timeGridWeek: {

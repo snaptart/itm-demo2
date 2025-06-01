@@ -1,4 +1,3 @@
-<!-- frontend/src/pages/CalendarPage.jsx -->
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CalendarView from '../components/calendar/CalendarView/CalendarView';
 import CalendarSidebar from '../components/calendar/CalendarSidebar/CalendarSidebar';
@@ -415,17 +414,3 @@ function CalendarPage() {
 }
 
 export default CalendarPage;
-
-/* Additional CSS for enhanced CalendarPage */
-.calendar-loading-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(255, 255, 255, 0.8);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}

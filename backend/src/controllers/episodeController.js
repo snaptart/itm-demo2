@@ -1,4 +1,3 @@
-<!-- backend/src/controllers/episodeController.js -->
 const { Episode, Event, Resource, Facility, Program, Booking, User } = require('../models');
 const { Op } = require('sequelize');
 const sequelize = require('../config/database');
