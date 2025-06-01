@@ -1,0 +1,217 @@
+.time-slot-grid {
+  flex: 1;
+  overflow: auto;
+  background: white;
+}
+
+/* Week View Styles */
+.week-view .grid-header {
+  display: grid;
+  grid-template-columns: 80px repeat(7, 1fr);
+  background: #f7fafc;
+  border-bottom: 2px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.time-column-header {
+  padding: 12px;
+  font-weight: 600;
+  color: #4a5568;
+  border-right: 1px solid #e2e8f0;
+}
+
+.day-header {
+  padding: 12px;
+  text-align: center;
+  font-weight: 600;
+  color: #2d3748;
+  border-right: 1px solid #e2e8f0;
+}
+
+.day-header.today {
+  background: #ebf8ff;
+  color: #2b6cb0;
+}
+
+.week-view .grid-body {
+  display: grid;
+  grid-template-columns: 80px repeat(7, 1fr);
+}
+
+.time-row {
+  display: contents;
+}
+
+.time-label {
+  padding: 12px;
+  font-size: 14px;
+  color: #718096;
+  background: #f7fafc;
+  border-right: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.day-column {
+  padding: 4px;
+  border-right: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+  min-height: 80px;
+}
+
+.resource-slot {
+  margin-bottom: 4px;
+  min-height: 36px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.empty-slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: #f7fafc;
+  border: 1px dashed #cbd5e0;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.empty-slot:hover {
+  background: #e6f4ff;
+  border-color: #4299e1;
+}
+
+.resource-name {
+  font-size: 12px;
+  color: #718096;
+}
+
+.add-icon {
+  opacity: 0;
+  color: #4299e1;
+  font-weight: 600;
+  transition: opacity 0.2s;
+}
+
+.empty-slot:hover .add-icon {
+  opacity: 1;
+}
+
+/* Month View Styles */
+.month-view {
+  padding: 20px;
+}
+
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  background: #e2e8f0;
+  border: 1px solid #e2e8f0;
+}
+
+.month-day-header {
+  padding: 12px;
+  background: #f7fafc;
+  text-align: center;
+  font-weight: 600;
+  color: #4a5568;
+  font-size: 14px;
+}
+
+.month-day {
+  background: white;
+  min-height: 100px;
+  padding: 8px;
+}
+
+.month-day.empty {
+  background: #f7fafc;
+}
+
+.month-day.today {
+  background: #f0f9ff;
+}
+
+.day-number {
+  font-size: 14px;
+  font-weight: 600;
+  color: #4a5568;
+  margin-bottom: 4px;
+}
+
+.month-day.today .day-number {
+  color: #2b6cb0;
+}
+
+.day-episodes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.month-episode {
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.month-episode.available {
+  background: #c6f6d5;
+  color: #22543d;
+}
+
+.month-episode.pending {
+  background: #feebc8;
+  color: #744210;
+}
+
+.month-episode.booked {
+  background: #bee3f8;
+  color: #2a4e7c;
+}
+
+.month-episode.maintenance {
+  background: #e2e8f0;
+  color: #4a5568;
+}
+
+.more-episodes {
+  font-size: 11px;
+  color: #718096;
+  font-style: italic;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .week-view .grid-header,
+  .week-view .grid-body {
+    grid-template-columns: 60px repeat(7, 1fr);
+  }
+  
+  .time-column-header,
+  .time-label {
+    font-size: 12px;
+    padding: 8px;
+  }
+  
+  .day-header {
+    font-size: 12px;
+    padding: 8px;
+  }
+  
+  .month-grid {
+    gap: 0;
+  }
+  
+  .month-day {
+    min-height: 80px;
+    padding: 4px;
+  }
+}

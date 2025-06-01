@@ -1,0 +1,100 @@
+.calendar-view {
+  display: flex;
+  height: calc(100vh - 80px);
+  background-color: #f7fafc;
+}
+
+.calendar-sidebar {
+  width: 280px;
+  background: white;
+  border-right: 1px solid #e2e8f0;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.calendar-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.calendar-legend {
+  margin-top: 24px;
+  padding: 16px;
+  background: #f7fafc;
+  border-radius: 8px;
+}
+
+.calendar-legend h3 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  color: #2d3748;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.legend-color {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid #e2e8f0;
+}
+
+.legend-color.available {
+  background-color: #c6f6d5;
+  border-color: #9ae6b4;
+}
+
+.legend-color.pending {
+  background-color: #feebc8;
+  border-color: #f6ad55;
+}
+
+.legend-color.booked {
+  background-color: #bee3f8;
+  border-color: #90cdf4;
+}
+
+.legend-color.maintenance {
+  background-color: #e2e8f0;
+  border-color: #cbd5e0;
+}
+
+.legend-item span {
+  font-size: 14px;
+  color: #4a5568;
+}
+
+.no-resources-message {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 40px;
+  text-align: center;
+}
+
+.no-resources-message p {
+  color: #718096;
+  font-size: 16px;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .calendar-view {
+    flex-direction: column;
+    height: auto;
+  }
+  
+  .calendar-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid #e2e8f0;
+  }
+}

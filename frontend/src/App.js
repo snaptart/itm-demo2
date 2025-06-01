@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginForm from './components/LoginForm';
 import DashboardPage from './pages/DashboardPage';
+import CalendarPage from './pages/CalendarPage';
 import authService from './services/authService';
 import './App.css';
 
@@ -105,10 +106,7 @@ function App() {
               path="/calendar" 
               element={
                 user ? (
-                  <div style={{ padding: '40px' }}>
-                    <h2>Calendar View</h2>
-                    <p>Calendar features coming soon...</p>
-                  </div>
+                  <CalendarPage />
                 ) : (
                   <Navigate to="/login" replace />
                 )

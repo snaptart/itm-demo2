@@ -1,0 +1,143 @@
+.episode-card {
+  padding: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+
+.episode-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Compact version for week view */
+.episode-card.compact {
+  padding: 6px;
+  font-size: 12px;
+}
+
+.episode-card.compact .episode-time {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.episode-card.compact .episode-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.episode-card.compact .episode-program {
+  font-size: 11px;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Full version */
+.episode-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  margin-bottom: 8px;
+}
+
+.episode-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.episode-card.compact .episode-title {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.episode-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.detail-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.detail-icon {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+/* Status colors */
+.status-available {
+  background-color: #c6f6d5;
+  border-color: #9ae6b4;
+  color: #22543d;
+}
+
+.status-available:hover {
+  background-color: #9ae6b4;
+}
+
+.status-pending {
+  background-color: #feebc8;
+  border-color: #f6ad55;
+  color: #744210;
+}
+
+.status-pending:hover {
+  background-color: #fed7a6;
+}
+
+.status-booked {
+  background-color: #bee3f8;
+  border-color: #90cdf4;
+  color: #2a4e7c;
+}
+
+.status-booked:hover {
+  background-color: #90cdf4;
+}
+
+.status-maintenance {
+  background-color: #e2e8f0;
+  border-color: #cbd5e0;
+  color: #4a5568;
+}
+
+.status-maintenance:hover {
+  background-color: #cbd5e0;
+}
+
+.status-badge.status-available {
+  background-color: #22543d;
+  color: white;
+}
+
+.status-badge.status-pending {
+  background-color: #744210;
+  color: white;
+}
+
+.status-badge.status-booked {
+  background-color: #2a4e7c;
+  color: white;
+}
+
+.status-badge.status-maintenance {
+  background-color: #4a5568;
+  color: white;
+}

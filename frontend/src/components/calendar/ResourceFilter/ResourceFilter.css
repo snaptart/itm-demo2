@@ -1,0 +1,83 @@
+.resource-filter {
+  margin-bottom: 24px;
+}
+
+.filter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.filter-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.filter-action-btn {
+  padding: 4px 12px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #4a5568;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.filter-action-btn:hover {
+  background: #f7fafc;
+  border-color: #cbd5e0;
+}
+
+.resource-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resource-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.resource-item:hover {
+  background: #f7fafc;
+  border-color: #cbd5e0;
+}
+
+.resource-checkbox {
+  margin-right: 10px;
+  cursor: pointer;
+}
+
+.resource-label {
+  flex: 1;
+  font-size: 14px;
+  color: #4a5568;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.status-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  background: #feebc8;
+  color: #744210;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
