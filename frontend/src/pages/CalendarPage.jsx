@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+<!-- frontend/src/pages/CalendarPage.jsx -->
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CalendarView from '../components/calendar/CalendarView/CalendarView';
 import CalendarSidebar from '../components/calendar/CalendarSidebar/CalendarSidebar';
 import EventModal from '../components/calendar/EventModal/EventModal';
 import CreateEventModal from '../components/calendar/CreateEventModal/CreateEventModal';
 import LoadingSpinner from '../components/common/LoadingSpinner/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage/ErrorMessage';
+import { ToastContainer, useToast } from '../components/common/Toast/Toast';
 import calendarService from '../services/calendarService';
 import facilityService from '../services/facilityService';
 import resourceService from '../services/resourceService';
@@ -27,11 +29,28 @@ function CalendarPage() {
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   
+  // Toast notifications
+  const { toasts, addToast, removeToast, success, error: errorToast, info } = useToast();
+  
+  // Ref to store the latest events for optimistic updates
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+  
+  // Request cancellation
+  const loadEventsAbortController = useRef(null);
+  
   const currentUser = authService.getCurrentUser();
   const isAdmin = currentUser?.user_type === 'admin';
 
   useEffect(() => {
     loadInitialData();
+    
+    // Cleanup on unmount
+    return () => {
+      if (loadEventsAbortController.current) {
+        loadEventsAbortController.current.abort();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -62,9 +81,11 @@ function CalendarPage() {
         }
       } else {
         setError(facilitiesResult.error);
+        errorToast('Failed to load facilities');
       }
     } catch (err) {
       setError('Failed to load initial data');
+      errorToast('Failed to load initial data');
       console.error('Calendar initial data error:', err);
     } finally {
       setLoading(false);
@@ -72,17 +93,29 @@ function CalendarPage() {
   };
 
   const loadResourcesForFacility = async (facilityId) => {
-    const resourcesResult = await calendarService.getCalendarResources({ facility_id: facilityId });
-    if (resourcesResult.success) {
-      setResources(resourcesResult.data.resources);
-      // Auto-select all resources
-      setSelectedResources(resourcesResult.data.resources.map(r => r.id));
+    try {
+      const resourcesResult = await calendarService.getCalendarResources({ facility_id: facilityId });
+      if (resourcesResult.success) {
+        setResources(resourcesResult.data.resources);
+        // Auto-select all resources
+        setSelectedResources(resourcesResult.data.resources.map(r => r.id));
+      } else {
+        errorToast('Failed to load resources');
+      }
+    } catch (err) {
+      console.error('Load resources error:', err);
+      errorToast('Failed to load resources');
     }
   };
 
   const loadCalendarEvents = async () => {
-    // Prevent concurrent loads
-    if (isLoadingEvents) return;
+    // Cancel previous request if still pending
+    if (loadEventsAbortController.current) {
+      loadEventsAbortController.current.abort();
+    }
+    
+    // Create new abort controller for this request
+    loadEventsAbortController.current = new AbortController();
     
     try {
       setIsLoadingEvents(true);
@@ -95,6 +128,7 @@ function CalendarPage() {
       };
 
       const eventsResult = await calendarService.getEpisodes(params);
+      
       if (eventsResult.success) {
         // Filter events by selected resources
         const filteredEvents = eventsResult.data.events.filter(event => 
@@ -111,12 +145,19 @@ function CalendarPage() {
         setEvents(processedEvents);
       } else {
         setError(eventsResult.error);
+        if (!eventsResult.cancelled) {
+          errorToast('Failed to load calendar events');
+        }
       }
     } catch (err) {
-      setError('Failed to load calendar events');
-      console.error('Calendar events error:', err);
+      if (err.name !== 'AbortError') {
+        setError('Failed to load calendar events');
+        errorToast('Failed to load calendar events');
+        console.error('Calendar events error:', err);
+      }
     } finally {
       setIsLoadingEvents(false);
+      loadEventsAbortController.current = null;
     }
   };
 
@@ -127,6 +168,7 @@ function CalendarPage() {
     
     if (facility) {
       await loadResourcesForFacility(facility.facility_id);
+      info(`Switched to ${facility.facility_name}`);
     }
   };
 
@@ -142,14 +184,8 @@ function CalendarPage() {
 
   const handleEventClick = async (info) => {
     const episodeId = info.event.extendedProps.episodeId;
-    
-    const result = await calendarService.getEpisodeById(episodeId);
-    if (result.success) {
-      setSelectedEvent(result.data.episode);
-      setShowEventModal(true);
-    } else {
-      setError('Failed to load episode details');
-    }
+    setSelectedEvent({ episode_id: episodeId });
+    setShowEventModal(true);
   };
 
   const handleEventModalClose = () => {
@@ -160,10 +196,19 @@ function CalendarPage() {
   const handleEventUpdate = async () => {
     // Reload calendar events after update
     await loadCalendarEvents();
-    handleEventModalClose();
   };
 
   const handleCreateEvent = () => {
+    if (!selectedFacility) {
+      errorToast('Please select a facility first');
+      return;
+    }
+    
+    if (selectedResources.length === 0) {
+      errorToast('Please select at least one rink');
+      return;
+    }
+    
     setSelectedDateForCreate(calendarDate);
     setShowCreateModal(true);
   };
@@ -174,19 +219,24 @@ function CalendarPage() {
   };
 
   const handleCreateSuccess = async () => {
+    success('Ice time created successfully');
     await loadCalendarEvents();
     setShowCreateModal(false);
     setSelectedDateForCreate(null);
   };
 
   const handleDateClick = (arg) => {
-    setSelectedDateForCreate(arg.date);
-    setShowCreateModal(true);
+    if (isAdmin) {
+      setSelectedDateForCreate(arg.date);
+      setShowCreateModal(true);
+    }
   };
 
   const handleDateSelect = (selectInfo) => {
-    setSelectedDateForCreate(selectInfo.start);
-    setShowCreateModal(true);
+    if (isAdmin) {
+      setSelectedDateForCreate(selectInfo.start);
+      setShowCreateModal(true);
+    }
   };
 
   const handleViewChange = useCallback((view) => {
@@ -196,6 +246,80 @@ function CalendarPage() {
   const handleDateChange = useCallback((date) => {
     setCalendarDate(date);
   }, []);
+
+  // Optimistic update handlers
+  const handleEventSuccess = (message) => {
+    success(message);
+  };
+
+  const handleEventError = (message) => {
+    errorToast(message);
+  };
+
+  // Optimistic delete with rollback
+  const optimisticDelete = async (episodeId) => {
+    // Store current events for rollback
+    const previousEvents = [...eventsRef.current];
+    
+    // Optimistically remove the event
+    setEvents(prev => prev.filter(e => e.extendedProps.episodeId !== episodeId));
+    
+    try {
+      const result = await calendarService.deleteEpisode(episodeId);
+      if (!result.success) {
+        // Rollback on failure
+        setEvents(previousEvents);
+        throw new Error(result.error || 'Failed to delete episode');
+      }
+      success('Ice time deleted successfully');
+    } catch (err) {
+      // Rollback on error
+      setEvents(previousEvents);
+      errorToast(err.message || 'Failed to delete ice time');
+      throw err;
+    }
+  };
+
+  // Optimistic update with rollback
+  const optimisticUpdate = async (episodeId, updateData) => {
+    // Store current events for rollback
+    const previousEvents = [...eventsRef.current];
+    
+    // Optimistically update the event
+    setEvents(prev => prev.map(event => {
+      if (event.extendedProps.episodeId === episodeId) {
+        return {
+          ...event,
+          title: updateData.episode_title || event.title,
+          extendedProps: {
+            ...event.extendedProps,
+            status: updateData.episode_status || event.extendedProps.status,
+            price: updateData.episode_price ? `$${updateData.episode_price}` : event.extendedProps.price
+          },
+          backgroundColor: calendarService.getStatusColorMap()[updateData.episode_status] || event.backgroundColor,
+          borderColor: calendarService.getStatusColorMap()[updateData.episode_status] || event.borderColor
+        };
+      }
+      return event;
+    }));
+    
+    try {
+      const result = await calendarService.updateEpisode(episodeId, updateData);
+      if (!result.success) {
+        // Rollback on failure
+        setEvents(previousEvents);
+        throw new Error(result.error || 'Failed to update episode');
+      }
+      success('Ice time updated successfully');
+      // Reload to get fresh data
+      await loadCalendarEvents();
+    } catch (err) {
+      // Rollback on error
+      setEvents(previousEvents);
+      errorToast(err.message || 'Failed to update ice time');
+      throw err;
+    }
+  };
 
   if (loading) {
     return <LoadingSpinner size="large" message="Loading calendar..." />;
@@ -231,18 +355,25 @@ function CalendarPage() {
 
         <div className="calendar-main">
           {selectedFacility && selectedResources.length > 0 ? (
-            <CalendarView
-              events={events}
-              resources={resources.filter(r => selectedResources.includes(r.id))}
-              view={calendarView}
-              date={calendarDate}
-              onViewChange={handleViewChange}
-              onDateChange={handleDateChange}
-              onEventClick={handleEventClick}
-              onDateClick={handleDateClick}
-              onDateSelect={handleDateSelect}
-              isAdmin={isAdmin}
-            />
+            <>
+              {isLoadingEvents && (
+                <div className="calendar-loading-overlay">
+                  <LoadingSpinner size="small" message="Loading events..." />
+                </div>
+              )}
+              <CalendarView
+                events={events}
+                resources={resources.filter(r => selectedResources.includes(r.id))}
+                view={calendarView}
+                date={calendarDate}
+                onViewChange={handleViewChange}
+                onDateChange={handleDateChange}
+                onEventClick={handleEventClick}
+                onDateClick={handleDateClick}
+                onDateSelect={handleDateSelect}
+                isAdmin={isAdmin}
+              />
+            </>
           ) : (
             <div className="calendar-empty-state">
               <p>Please select a facility and at least one rink to view the calendar.</p>
@@ -257,7 +388,11 @@ function CalendarPage() {
           isAdmin={isAdmin}
           onClose={handleEventModalClose}
           onUpdate={handleEventUpdate}
+          onSuccess={handleEventSuccess}
+          onError={handleEventError}
           calendarService={calendarService}
+          onOptimisticUpdate={optimisticUpdate}
+          onOptimisticDelete={optimisticDelete}
         />
       )}
 
@@ -273,8 +408,24 @@ function CalendarPage() {
           resourceService={resourceService}
         />
       )}
+
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
     </div>
   );
 }
 
 export default CalendarPage;
+
+/* Additional CSS for enhanced CalendarPage */
+.calendar-loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
