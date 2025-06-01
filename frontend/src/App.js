@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginForm from './components/LoginForm';
+import DashboardPage from './pages/DashboardPage';
 import authService from './services/authService';
 import './App.css';
 
@@ -29,50 +31,160 @@ function App() {
     return <div className="loading">Loading...</div>;
   }
 
-  if (!user) {
-    return <LoginForm onLoginSuccess={handleLoginSuccess} />;
-  }
-
   return (
-    <div className="App">
-      <header className="app-header">
-        <div className="header-content">
-          <h1>RinkFinder</h1>
-          <div className="user-info">
-            <span className="welcome-text">
-              Welcome, {user.first_name || user.username}!
-            </span>
-            <span className="user-type">({user.user_type})</span>
-            <button onClick={handleLogout} className="logout-button">
-              Logout
-            </button>
-          </div>
-        </div>
-      </header>
-      
-      <main className="app-main">
-        <div className="dashboard">
-          <h2>Dashboard</h2>
-          <div className="info-card">
-            <h3>User Information</h3>
-            <p><strong>Username:</strong> {user.username}</p>
-            <p><strong>Email:</strong> {user.email}</p>
-            <p><strong>Role:</strong> {user.user_type}</p>
-            <p><strong>Name:</strong> {user.first_name} {user.last_name}</p>
-          </div>
-          
-          <div className="coming-soon">
-            <h3>Coming Soon</h3>
-            <ul>
-              <li>View facility schedules</li>
-              <li>Book ice time slots</li>
-              <li>Manage bookings</li>
-              <li>Real-time notifications</li>
-            </ul>
-          </div>
-        </div>
-      </main>
-    </div>
+    <Router>
+      <div className="App">
+        {user && (
+          <header className="app-header">
+            <div className="header-content">
+              <h1>RinkFinder</h1>
+              <nav className="nav-menu">
+                <a href="/dashboard">Dashboard</a>
+                <a href="/facilities">Facilities</a>
+                <a href="/calendar">Calendar</a>
+                <a href="/bookings">Bookings</a>
+              </nav>
+              <div className="user-info">
+                <span className="welcome-text">
+                  Welcome, {user.first_name || user.username}!
+                </span>
+                <span className="user-type">({user.user_type})</span>
+                <button onClick={handleLogout} className="logout-button">
+                  Logout
+                </button>
+              </div>
+            </div>
+          </header>
+        )}
+        
+        <main className="app-main">
+          <Routes>
+            <Route 
+              path="/login" 
+              element={
+                user ? (
+                  <Navigate to="/dashboard" replace />
+                ) : (
+                  <LoginForm onLoginSuccess={handleLoginSuccess} />
+                )
+              } 
+            />
+            
+            <Route 
+              path="/dashboard" 
+              element={
+                user ? (
+                  <DashboardPage />
+                ) : (
+                  <Navigate to="/login" replace />
+                )
+              } 
+            />
+            
+            <Route 
+              path="/" 
+              element={<Navigate to={user ? "/dashboard" : "/login"} replace />} 
+            />
+            
+            {/* Placeholder routes for future pages */}
+            <Route 
+              path="/facilities/*" 
+              element={
+                user ? (
+                  <div style={{ padding: '40px' }}>
+                    <h2>Facilities Management</h2>
+                    <p>Facility management features coming soon...</p>
+                  </div>
+                ) : (
+                  <Navigate to="/login" replace />
+                )
+              } 
+            />
+            
+            <Route 
+              path="/calendar" 
+              element={
+                user ? (
+                  <div style={{ padding: '40px' }}>
+                    <h2>Calendar View</h2>
+                    <p>Calendar features coming soon...</p>
+                  </div>
+                ) : (
+                  <Navigate to="/login" replace />
+                )
+              } 
+            />
+            
+            <Route 
+              path="/bookings" 
+              element={
+                user ? (
+                  <div style={{ padding: '40px' }}>
+                    <h2>Bookings</h2>
+                    <p>Booking management features coming soon...</p>
+                  </div>
+                ) : (
+                  <Navigate to="/login" replace />
+                )
+              } 
+            />
+            
+            <Route 
+              path="/programs" 
+              element={
+                user ? (
+                  <div style={{ padding: '40px' }}>
+                    <h2>Programs</h2>
+                    <p>Program management features coming soon...</p>
+                  </div>
+                ) : (
+                  <Navigate to="/login" replace />
+                )
+              } 
+            />
+            
+            <Route 
+              path="/notifications" 
+              element={
+                user ? (
+                  <div style={{ padding: '40px' }}>
+                    <h2>Notifications</h2>
+                    <p>Notification features coming soon...</p>
+                  </div>
+                ) : (
+                  <Navigate to="/login" replace />
+                )
+              } 
+            />
+            
+            <Route 
+              path="/reports" 
+              element={
+                user && user.user_type === 'admin' ? (
+                  <div style={{ padding: '40px' }}>
+                    <h2>Reports</h2>
+                    <p>Reporting features coming soon...</p>
+                  </div>
+                ) : (
+                  <Navigate to="/login" replace />
+                )
+              } 
+            />
+            
+            <Route 
+              path="*" 
+              element={
+                <div style={{ padding: '40px', textAlign: 'center' }}>
+                  <h2>404 - Page Not Found</h2>
+                  <p>The page you're looking for doesn't exist.</p>
+                  <a href="/">Go to Home</a>
+                </div>
+              } 
+            />
+          </Routes>
+        </main>
+      </div>
+    </Router>
   );
 }
 

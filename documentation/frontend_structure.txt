@@ -1,0 +1,32 @@
+frontend/
+├── src/
+│   ├── components/
+│   │   ├── common/          # Reusable UI components
+│   │   │   ├── Header.jsx
+│   │   │   ├── Navigation.jsx
+│   │   │   └── LoadingSpinner.jsx
+│   │   ├── auth/
+│   │   │   ├── LoginForm.jsx
+│   │   │   └── ProtectedRoute.jsx
+│   │   ├── calendar/
+│   │   │   ├── CalendarView.jsx
+│   │   │   ├── TimeSlot.jsx
+│   │   │   └── BookingModal.jsx
+│   │   └── booking/
+│   │       ├── BookingList.jsx
+│   │       └── BookingDetails.jsx
+│   ├── pages/
+│   │   ├── Dashboard.jsx
+│   │   ├── FacilitySchedule.jsx
+│   │   ├── MyBookings.jsx
+│   │   └── AdminPanel.jsx
+│   ├── services/
+│   │   ├── api.js           # Axios configuration
+│   │   ├── authService.js
+│   │   └── bookingService.js
+│   ├── store/               # Redux or Context API
+│   │   ├── authSlice.js
+│   │   └── bookingSlice.js
+│   └── utils/
+│       ├── dateHelpers.js
+│       └── constants.js

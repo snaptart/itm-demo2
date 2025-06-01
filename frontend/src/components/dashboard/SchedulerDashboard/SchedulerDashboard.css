@@ -1,0 +1,137 @@
+.scheduler-dashboard {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.dashboard-header {
+  margin-bottom: 32px;
+}
+
+.dashboard-header h1 {
+  margin: 0 0 8px 0;
+  color: #1a202c;
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.welcome-message {
+  color: #718096;
+  font-size: 16px;
+  margin: 0;
+}
+
+.scheduler-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+  margin-bottom: 40px;
+}
+
+.scheduler-action-card {
+  background: white;
+  border-radius: 12px;
+  padding: 32px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s;
+  border: 2px solid transparent;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.scheduler-action-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+}
+
+.scheduler-action-card.blue:hover {
+  border-color: #4299e1;
+}
+
+.scheduler-action-card.green:hover {
+  border-color: #48bb78;
+}
+
+.scheduler-action-card.purple:hover {
+  border-color: #9f7aea;
+}
+
+.scheduler-action-card.orange:hover {
+  border-color: #ed8936;
+}
+
+.action-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.scheduler-action-card h3 {
+  margin: 0 0 8px 0;
+  font-size: 20px;
+  color: #2d3748;
+  font-weight: 600;
+}
+
+.scheduler-action-card p {
+  margin: 0;
+  color: #718096;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.dashboard-sections {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.dashboard-section {
+  background: white;
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.dashboard-section h2 {
+  margin: 0 0 20px 0;
+  font-size: 20px;
+  color: #2d3748;
+}
+
+.placeholder-content {
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.placeholder-content p {
+  color: #a0aec0;
+  font-style: italic;
+  margin: 0;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .scheduler-dashboard {
+    padding: 16px;
+  }
+  
+  .dashboard-header h1 {
+    font-size: 24px;
+  }
+  
+  .scheduler-actions {
+    grid-template-columns: 1fr;
+  }
+  
+  .dashboard-sections {
+    grid-template-columns: 1fr;
+  }
+  
+  .scheduler-action-card {
+    padding: 24px;
+  }
+  
+  .action-icon {
+    font-size: 36px;
+  }
+}
