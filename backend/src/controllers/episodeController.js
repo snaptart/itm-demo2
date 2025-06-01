@@ -1,10 +1,13 @@
-// backend/src/controllers/episodeController.js (Fixed with proper drag-drop implementation)
+// backend/src/controllers/episodeController.js (Enhanced with Timezone and Drag-Drop)
 const { Episode, Event, Resource, Facility, Program, Booking, User } = require('../models');
 const { Op } = require('sequelize');
 const sequelize = require('../config/database');
+const TimezoneUtils = require('../utils/timezoneUtils');
+const conflictDetectionService = require('../services/conflictDetectionService');
+const businessRulesValidator = require('../utils/businessRulesValidator');
 
 const episodeController = {
-  // Get episodes for calendar view
+  // Get episodes for calendar view with timezone conversion
   async getEpisodes(req, res) {
     try {
       const { 
@@ -13,18 +16,26 @@ const episodeController = {
         facility_id, 
         resource_id, 
         status,
-        program_id
+        program_id,
+        timezone // Client timezone preference
       } = req.query;
 
       // Build where clause
       const whereClause = {};
       
-      // Date range filter with validation
+      // Get facility for timezone context
+      let facilityTimezone = TimezoneUtils.DEFAULT_TIMEZONE;
+      if (facility_id) {
+        const facility = await Facility.findByPk(facility_id);
+        facilityTimezone = facility?.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
+      }
+
+      // Date range filter with timezone conversion
       if (start && end) {
-        const startDate = new Date(start);
-        const endDate = new Date(end);
+        const startDate = TimezoneUtils.parseAndConvertToUTC(start, timezone || facilityTimezone);
+        const endDate = TimezoneUtils.parseAndConvertToUTC(end, timezone || facilityTimezone);
         
-        if (isNaN(startDate) || isNaN(endDate)) {
+        if (!startDate || !endDate) {
           return res.status(400).json({ 
             message: 'Invalid date format' 
           });
@@ -40,8 +51,8 @@ const episodeController = {
           [Op.between]: [startDate, endDate]
         };
       } else if (start) {
-        const startDate = new Date(start);
-        if (isNaN(startDate)) {
+        const startDate = TimezoneUtils.parseAndConvertToUTC(start, timezone || facilityTimezone);
+        if (!startDate) {
           return res.status(400).json({ 
             message: 'Invalid start date format' 
           });
@@ -50,8 +61,8 @@ const episodeController = {
           [Op.gte]: startDate
         };
       } else if (end) {
-        const endDate = new Date(end);
-        if (isNaN(endDate)) {
+        const endDate = TimezoneUtils.parseAndConvertToUTC(end, timezone || facilityTimezone);
+        if (!endDate) {
           return res.status(400).json({ 
             message: 'Invalid end date format' 
           });
@@ -111,7 +122,6 @@ const episodeController = {
 
       // For schedulers, filter to show only available slots or their program's slots
       if (req.user.user_type === 'scheduler') {
-        // Get user's programs
         const userPrograms = await Program.findAll({
           where: { scheduler_user_id: req.user.user_id },
           attributes: ['program_id']
@@ -126,7 +136,6 @@ const episodeController = {
             { assigned_to_program_id: { [Op.in]: programIds } }
           ];
         } else {
-          // If scheduler has no programs, only show available slots
           whereClause.episode_status = 'available';
         }
       }
@@ -135,37 +144,54 @@ const episodeController = {
         where: whereClause,
         include: includeArray,
         order: [['episode_start_date_time', 'ASC']],
-        limit: 1000 // Limit results to prevent performance issues
+        limit: 1000
       });
 
-      // Transform episodes for calendar view
-      const calendarEvents = episodes.map(episode => ({
-        id: episode.episode_id,
-        title: episode.episode_title || 'Ice Time',
-        start: episode.episode_start_date_time,
-        end: episode.episode_end_date_time,
-        resourceId: episode.event.resource_id,
-        backgroundColor: getStatusColor(episode.episode_status),
-        borderColor: getStatusColor(episode.episode_status),
-        textColor: episode.episode_status === 'available' ? '#000000' : '#FFFFFF',
-        extendedProps: {
-          episodeId: episode.episode_id,
-          status: episode.episode_status,
-          price: episode.episode_price ? `$${parseFloat(episode.episode_price).toFixed(2)}` : 'N/A',
-          duration: episode.episode_duration,
-          facility: episode.event.resource.facility.facility_name,
-          resource: episode.event.resource.resource_name,
-          program: episode.program?.program_name || null,
-          assignedProgram: episode.assignedProgram?.program_name || null,
-          canBook: ['available', 'assigned'].includes(episode.episode_status),
-          description: episode.episode_description,
-          hasBookings: episode.bookings && episode.bookings.length > 0
-        }
-      }));
+      // Transform episodes for calendar view with timezone conversion
+      const calendarEvents = episodes.map(episode => {
+        const episodeFacilityTimezone = episode.event.resource.facility.facility_time_zone || facilityTimezone;
+        const displayTimezone = timezone || episodeFacilityTimezone;
+
+        return {
+          id: episode.episode_id,
+          title: episode.episode_title || 'Ice Time',
+          start: episode.episode_start_date_time,
+          end: episode.episode_end_date_time,
+          resourceId: episode.event.resource_id,
+          backgroundColor: getStatusColor(episode.episode_status, req.user.user_type, episode),
+          borderColor: getStatusColor(episode.episode_status, req.user.user_type, episode),
+          textColor: episode.episode_status === 'available' ? '#000000' : '#FFFFFF',
+          extendedProps: {
+            episodeId: episode.episode_id,
+            status: episode.episode_status,
+            price: episode.episode_price ? `$${parseFloat(episode.episode_price).toFixed(2)}` : 'N/A',
+            duration: episode.episode_duration,
+            facility: episode.event.resource.facility.facility_name,
+            facilityTimezone: episodeFacilityTimezone,
+            resource: episode.event.resource.resource_name,
+            program: episode.program?.program_name || null,
+            assignedProgram: episode.assignedProgram?.program_name || null,
+            canBook: ['available', 'assigned'].includes(episode.episode_status),
+            canEdit: canEditEpisode(episode, req.user),
+            description: episode.episode_description,
+            displayStartTime: TimezoneUtils.formatForDisplay(
+              episode.episode_start_date_time, 
+              displayTimezone, 
+              'h:mm A z'
+            ),
+            displayEndTime: TimezoneUtils.formatForDisplay(
+              episode.episode_end_date_time, 
+              displayTimezone, 
+              'h:mm A z'
+            )
+          }
+        };
+      });
 
       res.json({
         events: calendarEvents,
-        total: episodes.length
+        total: episodes.length,
+        timezone: facilityTimezone
       });
 
     } catch (error) {
@@ -177,60 +203,37 @@ const episodeController = {
     }
   },
 
-  // Get single episode details
-  async getEpisodeById(req, res) {
+  // Validate episode move/resize with full conflict detection
+  async validateEpisodeMove(req, res) {
     try {
-      const { id } = req.params;
+      const { 
+        episode_id, 
+        new_start_time, 
+        new_end_time, 
+        facility_id 
+      } = req.body;
 
-      // Validate ID
-      if (!id || isNaN(id)) {
+      // Validate required fields
+      if (!episode_id || !new_start_time || !new_end_time) {
         return res.status(400).json({ 
-          message: 'Invalid episode ID' 
+          message: 'Episode ID, new start time, and new end time are required' 
         });
       }
 
-      const episode = await Episode.findByPk(id, {
-        include: [
-          {
-            model: Event,
-            as: 'event',
-            include: [
-              {
-                model: Resource,
-                as: 'resource',
-                include: [
-                  {
-                    model: Facility,
-                    as: 'facility'
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            model: Program,
-            as: 'program'
-          },
-          {
-            model: Program,
-            as: 'assignedProgram'
-          },
-          {
-            model: Booking,
-            as: 'bookings',
-            include: [
-              {
-                model: User,
-                as: 'user',
-                attributes: ['user_id', 'username', 'email', 'first_name', 'last_name']
-              },
-              {
-                model: Program,
-                as: 'program'
-              }
-            ]
-          }
-        ]
+      // Get episode for context
+      const episode = await Episode.findByPk(episode_id, {
+        include: [{
+          model: Event,
+          as: 'event',
+          include: [{
+            model: Resource,
+            as: 'resource',
+            include: [{
+              model: Facility,
+              as: 'facility'
+            }]
+          }]
+        }]
       });
 
       if (!episode) {
@@ -239,35 +242,363 @@ const episodeController = {
         });
       }
 
-      // Check if user has permission to view full details
-      let canViewFullDetails = req.user.user_type === 'admin';
-      
-      if (req.user.user_type === 'scheduler') {
-        const userPrograms = await Program.findAll({
-          where: { scheduler_user_id: req.user.user_id },
-          attributes: ['program_id']
+      const facility = episode.event.resource.facility;
+      const actualFacilityId = facility_id || facility.facility_id;
+
+      // Check business rules first
+      const businessRules = await businessRulesValidator.validateEpisodeMove({
+        episode,
+        newStartTime: new_start_time,
+        newEndTime: new_end_time,
+        facilityId: actualFacilityId,
+        userId: req.user.user_id
+      });
+
+      // If business rules fail, return those violations
+      if (businessRules.violations.length > 0) {
+        return res.json({
+          valid: false,
+          conflicts: businessRules.violations,
+          warnings: businessRules.warnings,
+          businessRuleViolations: businessRules.violations.map(v => v.description)
         });
-        
-        const programIds = userPrograms.map(p => p.program_id);
-        canViewFullDetails = programIds.includes(episode.program_id) || 
-                           programIds.includes(episode.assigned_to_program_id);
       }
 
+      // Check for scheduling conflicts
+      const conflictResult = await conflictDetectionService.checkEpisodeConflicts({
+        episodeId: episode_id,
+        resourceId: episode.event.resource_id,
+        newStartTime: new_start_time,
+        newEndTime: new_end_time,
+        facilityId: actualFacilityId
+      });
+
+      const isValid = conflictResult.conflicts.length === 0;
+
       res.json({
-        episode,
-        canViewFullDetails
+        valid: isValid,
+        conflicts: conflictResult.conflicts,
+        warnings: [...businessRules.warnings, ...conflictResult.warnings],
+        businessRuleViolations: []
       });
 
     } catch (error) {
-      console.error('Get episode error:', error);
+      console.error('Validate episode move error:', error);
       res.status(500).json({ 
-        message: 'An error occurred while fetching episode',
+        message: 'An error occurred while validating the move',
         error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   },
 
-  // Create new episode (Admin only)
+  // Move episode with full validation and timezone support
+  async moveEpisode(req, res) {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { id } = req.params;
+      const { new_start_time, new_end_time, new_duration } = req.body;
+
+      // Validate required fields
+      if (!new_start_time || !new_end_time) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'New start time and end time are required' 
+        });
+      }
+
+      const episode = await Episode.findByPk(id, {
+        include: [{
+          model: Event,
+          as: 'event',
+          include: [{
+            model: Resource,
+            as: 'resource',
+            include: [{
+              model: Facility,
+              as: 'facility'
+            }]
+          }]
+        }],
+        transaction
+      });
+
+      if (!episode) {
+        await transaction.rollback();
+        return res.status(404).json({ 
+          message: 'Episode not found' 
+        });
+      }
+
+      const facility = episode.event.resource.facility;
+      const facilityTimezone = facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
+
+      // Check permission
+      if (facility.admin_user_id !== req.user.user_id) {
+        await transaction.rollback();
+        return res.status(403).json({ 
+          message: 'You do not have permission to move this episode' 
+        });
+      }
+
+      // Validate move with business rules and conflicts
+      const validation = await this.validateEpisodeMove({
+        ...req,
+        body: {
+          episode_id: id,
+          new_start_time,
+          new_end_time,
+          facility_id: facility.facility_id
+        }
+      }, { json: () => {} });
+
+      if (!validation || !validation.valid) {
+        await transaction.rollback();
+        return res.status(400).json({
+          message: 'Move validation failed',
+          conflicts: validation?.conflicts || [],
+          warnings: validation?.warnings || []
+        });
+      }
+
+      // Convert times to UTC for storage
+      const utcStartTime = TimezoneUtils.parseAndConvertToUTC(new_start_time, facilityTimezone);
+      const utcEndTime = TimezoneUtils.parseAndConvertToUTC(new_end_time, facilityTimezone);
+
+      // Calculate duration
+      const duration = new_duration || TimezoneUtils.calculateDurationWithDST(
+        utcStartTime, 
+        utcEndTime, 
+        facilityTimezone
+      );
+
+      // Update episode
+      await episode.update({
+        episode_start_date_time: utcStartTime,
+        episode_end_date_time: utcEndTime,
+        episode_duration: duration,
+        updated_by: req.user.username
+      }, { transaction });
+
+      await transaction.commit();
+
+      // Reload with associations
+      const updatedEpisode = await Episode.findByPk(id, {
+        include: [
+          {
+            model: Event,
+            as: 'event',
+            include: [{
+              model: Resource,
+              as: 'resource',
+              include: [{
+                model: Facility,
+                as: 'facility'
+              }]
+            }]
+          },
+          {
+            model: Program,
+            as: 'program'
+          },
+          {
+            model: Program,
+            as: 'assignedProgram'
+          }
+        ]
+      });
+
+      res.json({
+        message: 'Episode moved successfully',
+        episode: TimezoneUtils.convertEpisodeTimesForAPI(updatedEpisode, facilityTimezone)
+      });
+
+    } catch (error) {
+      await transaction.rollback();
+      console.error('Move episode error:', error);
+      res.status(500).json({ 
+        message: 'An error occurred while moving the episode',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  },
+
+  // Resize episode with full validation and timezone support
+  async resizeEpisode(req, res) {
+    const transaction = await sequelize.transaction();
+    
+    try {
+      const { id } = req.params;
+      const { new_end_time, new_duration } = req.body;
+
+      // Validate required fields
+      if (!new_end_time) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'New end time is required' 
+        });
+      }
+
+      const episode = await Episode.findByPk(id, {
+        include: [{
+          model: Event,
+          as: 'event',
+          include: [{
+            model: Resource,
+            as: 'resource',
+            include: [{
+              model: Facility,
+              as: 'facility'
+            }]
+          }]
+        }],
+        transaction
+      });
+
+      if (!episode) {
+        await transaction.rollback();
+        return res.status(404).json({ 
+          message: 'Episode not found' 
+        });
+      }
+
+      const facility = episode.event.resource.facility;
+      const facilityTimezone = facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
+
+      // Check permission
+      if (facility.admin_user_id !== req.user.user_id) {
+        await transaction.rollback();
+        return res.status(403).json({ 
+          message: 'You do not have permission to resize this episode' 
+        });
+      }
+
+      // Validate resize with business rules and conflicts
+      const validation = await this.validateEpisodeMove({
+        ...req,
+        body: {
+          episode_id: id,
+          new_start_time: episode.episode_start_date_time,
+          new_end_time,
+          facility_id: facility.facility_id
+        }
+      }, { json: () => {} });
+
+      if (!validation || !validation.valid) {
+        await transaction.rollback();
+        return res.status(400).json({
+          message: 'Resize validation failed',
+          conflicts: validation?.conflicts || [],
+          warnings: validation?.warnings || []
+        });
+      }
+
+      // Convert end time to UTC for storage
+      const utcEndTime = TimezoneUtils.parseAndConvertToUTC(new_end_time, facilityTimezone);
+
+      // Calculate duration
+      const duration = new_duration || TimezoneUtils.calculateDurationWithDST(
+        episode.episode_start_date_time, 
+        utcEndTime, 
+        facilityTimezone
+      );
+
+      // Update episode
+      await episode.update({
+        episode_end_date_time: utcEndTime,
+        episode_duration: duration,
+        updated_by: req.user.username
+      }, { transaction });
+
+      await transaction.commit();
+
+      // Reload with associations
+      const updatedEpisode = await Episode.findByPk(id, {
+        include: [
+          {
+            model: Event,
+            as: 'event',
+            include: [{
+              model: Resource,
+              as: 'resource',
+              include: [{
+                model: Facility,
+                as: 'facility'
+              }]
+            }]
+          }
+        ]
+      });
+
+      res.json({
+        message: 'Episode resized successfully',
+        episode: TimezoneUtils.convertEpisodeTimesForAPI(updatedEpisode, facilityTimezone)
+      });
+
+    } catch (error) {
+      await transaction.rollback();
+      console.error('Resize episode error:', error);
+      res.status(500).json({ 
+        message: 'An error occurred while resizing the episode',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  },
+
+  // Validate batch moves with conflict detection
+  async validateBatchMoves(req, res) {
+    try {
+      const { moves } = req.body;
+
+      if (!Array.isArray(moves) || moves.length === 0) {
+        return res.status(400).json({ 
+          message: 'Moves array is required and cannot be empty' 
+        });
+      }
+
+      // Get facility context for timezone
+      let facilityId = null;
+      if (moves.length > 0 && moves[0].facility_id) {
+        facilityId = moves[0].facility_id;
+      }
+
+      // Validate business rules for each move
+      const businessRulesResults = await businessRulesValidator.validateBatchMoves(moves, req.user.user_id);
+
+      // Check for conflicts
+      const conflictResults = await conflictDetectionService.checkBatchConflicts(moves, facilityId);
+
+      // Combine results
+      const results = moves.map((move, index) => {
+        const businessRules = businessRulesResults[index] || { violations: [], warnings: [] };
+        const conflicts = conflictResults[index] || { conflicts: [], warnings: [] };
+
+        return {
+          episode_id: move.episode_id,
+          valid: businessRules.violations.length === 0 && conflicts.conflicts.length === 0,
+          conflicts: [...businessRules.violations, ...conflicts.conflicts],
+          warnings: [...businessRules.warnings, ...conflicts.warnings]
+        };
+      });
+
+      const overallValid = results.every(r => r.valid);
+
+      res.json({
+        valid: overallValid,
+        results,
+        overallConflicts: results.flatMap(r => r.conflicts)
+      });
+
+    } catch (error) {
+      console.error('Validate batch moves error:', error);
+      res.status(500).json({ 
+        message: 'An error occurred while validating batch moves',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  },
+
+  // Create new episode with timezone support
   async createEpisode(req, res) {
     const transaction = await sequelize.transaction();
     
@@ -279,7 +610,8 @@ const episodeController = {
         episode_title,
         episode_description,
         episode_price,
-        episode_status
+        episode_status,
+        facility_timezone
       } = req.body;
 
       // Validate required fields
@@ -290,32 +622,7 @@ const episodeController = {
         });
       }
 
-      // Validate dates
-      const startTime = new Date(episode_start_date_time);
-      const endTime = new Date(episode_end_date_time);
-      
-      if (isNaN(startTime) || isNaN(endTime)) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Invalid date format' 
-        });
-      }
-      
-      if (startTime >= endTime) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'End time must be after start time' 
-        });
-      }
-      
-      if (startTime < new Date()) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Cannot create episodes in the past' 
-        });
-      }
-
-      // Verify event exists
+      // Verify event exists and get facility context
       const event = await Event.findByPk(event_id, {
         include: [{
           model: Resource,
@@ -335,57 +642,56 @@ const episodeController = {
         });
       }
 
+      const facility = event.resource.facility;
+      const facilityTimezone = facility_timezone || facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
+
       // Check permission
-      if (event.resource.facility.admin_user_id !== req.user.user_id) {
+      if (facility.admin_user_id !== req.user.user_id) {
         await transaction.rollback();
         return res.status(403).json({ 
           message: 'You do not have permission to create episodes for this facility' 
         });
       }
 
-      // Check for overlapping episodes
-      const overlappingEpisode = await Episode.findOne({
-        where: {
-          event_id,
-          [Op.or]: [
-            {
-              episode_start_date_time: {
-                [Op.between]: [startTime, endTime]
-              }
-            },
-            {
-              episode_end_date_time: {
-                [Op.between]: [startTime, endTime]
-              }
-            },
-            {
-              [Op.and]: [
-                {
-                  episode_start_date_time: {
-                    [Op.lte]: startTime
-                  }
-                },
-                {
-                  episode_end_date_time: {
-                    [Op.gte]: endTime
-                  }
-                }
-              ]
-            }
-          ]
-        },
-        transaction
-      });
+      // Convert times to UTC for storage
+      const utcStartTime = TimezoneUtils.parseAndConvertToUTC(episode_start_date_time, facilityTimezone);
+      const utcEndTime = TimezoneUtils.parseAndConvertToUTC(episode_end_date_time, facilityTimezone);
 
-      if (overlappingEpisode) {
+      if (!utcStartTime || !utcEndTime) {
         await transaction.rollback();
         return res.status(400).json({ 
-          message: 'An episode already exists for this time slot' 
+          message: 'Invalid date format' 
+        });
+      }
+      
+      if (utcStartTime >= utcEndTime) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'End time must be after start time' 
+        });
+      }
+
+      // Validate with conflict detection
+      const conflictResult = await conflictDetectionService.checkEpisodeConflicts({
+        episodeId: null, // New episode
+        resourceId: event.resource_id,
+        newStartTime: episode_start_date_time,
+        newEndTime: episode_end_date_time,
+        facilityId: facility.facility_id,
+        skipSelf: false
+      });
+
+      if (conflictResult.conflicts.length > 0) {
+        await transaction.rollback();
+        return res.status(400).json({
+          message: 'Schedule conflicts detected',
+          conflicts: conflictResult.conflicts,
+          warnings: conflictResult.warnings
         });
       }
 
       // Calculate duration
-      const duration = Math.round((endTime - startTime) / (1000 * 60)); // in minutes
+      const duration = TimezoneUtils.calculateDurationWithDST(utcStartTime, utcEndTime, facilityTimezone);
 
       // Validate price
       let validatedPrice = null;
@@ -401,8 +707,8 @@ const episodeController = {
 
       const episode = await Episode.create({
         event_id,
-        episode_start_date_time: startTime,
-        episode_end_date_time: endTime,
+        episode_start_date_time: utcStartTime,
+        episode_end_date_time: utcEndTime,
         episode_duration: duration,
         episode_title: episode_title?.trim() || `Ice Time - ${event.resource.resource_name}`,
         episode_description: episode_description?.trim(),
@@ -434,7 +740,7 @@ const episodeController = {
 
       res.status(201).json({
         message: 'Episode created successfully',
-        episode: newEpisode
+        episode: TimezoneUtils.convertEpisodeTimesForAPI(newEpisode, facilityTimezone)
       });
 
     } catch (error) {
@@ -447,14 +753,13 @@ const episodeController = {
     }
   },
 
-  // Update episode (Admin only)
+  // Update episode with timezone support
   async updateEpisode(req, res) {
     const transaction = await sequelize.transaction();
     
     try {
       const { id } = req.params;
 
-      // Validate ID
       if (!id || isNaN(id)) {
         await transaction.rollback();
         return res.status(400).json({ 
@@ -485,8 +790,11 @@ const episodeController = {
         });
       }
 
+      const facility = episode.event.resource.facility;
+      const facilityTimezone = facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
+
       // Check permission
-      if (episode.event.resource.facility.admin_user_id !== req.user.user_id) {
+      if (facility.admin_user_id !== req.user.user_id) {
         await transaction.rollback();
         return res.status(403).json({ 
           message: 'You do not have permission to update this episode' 
@@ -494,17 +802,10 @@ const episodeController = {
       }
 
       // Check if episode can be edited
-      if (episode.episode_status === 'booked') {
+      if (!canEditEpisode(episode, req.user)) {
         await transaction.rollback();
         return res.status(400).json({ 
-          message: 'Cannot edit booked episodes' 
-        });
-      }
-
-      if (new Date(episode.episode_start_date_time) < new Date()) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Cannot edit past episodes' 
+          message: 'This episode cannot be edited' 
         });
       }
 
@@ -551,27 +852,27 @@ const episodeController = {
         updateData.episode_status = req.body.episode_status;
       }
 
-      // Handle datetime updates for drag-drop operations
+      // Handle datetime updates with timezone conversion
       if (req.body.episode_start_date_time !== undefined) {
-        const newStartTime = new Date(req.body.episode_start_date_time);
-        if (isNaN(newStartTime)) {
+        const utcStartTime = TimezoneUtils.parseAndConvertToUTC(req.body.episode_start_date_time, facilityTimezone);
+        if (!utcStartTime) {
           await transaction.rollback();
           return res.status(400).json({ 
-            message: 'Invalid start date format' 
+            message: 'Invalid start time format' 
           });
         }
-        updateData.episode_start_date_time = newStartTime;
+        updateData.episode_start_date_time = utcStartTime;
       }
 
       if (req.body.episode_end_date_time !== undefined) {
-        const newEndTime = new Date(req.body.episode_end_date_time);
-        if (isNaN(newEndTime)) {
+        const utcEndTime = TimezoneUtils.parseAndConvertToUTC(req.body.episode_end_date_time, facilityTimezone);
+        if (!utcEndTime) {
           await transaction.rollback();
           return res.status(400).json({ 
-            message: 'Invalid end date format' 
+            message: 'Invalid end time format' 
           });
         }
-        updateData.episode_end_date_time = newEndTime;
+        updateData.episode_end_date_time = utcEndTime;
       }
 
       // Recalculate duration if times changed
@@ -586,7 +887,7 @@ const episodeController = {
           });
         }
 
-        updateData.episode_duration = Math.round((endTime - startTime) / (1000 * 60));
+        updateData.episode_duration = TimezoneUtils.calculateDurationWithDST(startTime, endTime, facilityTimezone);
       }
 
       updateData.updated_by = req.user.username;
@@ -624,7 +925,7 @@ const episodeController = {
 
       res.json({
         message: 'Episode updated successfully',
-        episode: updatedEpisode
+        episode: TimezoneUtils.convertEpisodeTimesForAPI(updatedEpisode, facilityTimezone)
       });
 
     } catch (error) {
@@ -644,7 +945,6 @@ const episodeController = {
     try {
       const { id } = req.params;
 
-      // Validate ID
       if (!id || isNaN(id)) {
         await transaction.rollback();
         return res.status(400).json({ 
@@ -722,6 +1022,102 @@ const episodeController = {
     }
   },
 
+  // Get single episode details with timezone conversion
+  async getEpisodeById(req, res) {
+    try {
+      const { id } = req.params;
+      const { timezone } = req.query; // Client timezone preference
+
+      if (!id || isNaN(id)) {
+        return res.status(400).json({ 
+          message: 'Invalid episode ID' 
+        });
+      }
+
+      const episode = await Episode.findByPk(id, {
+        include: [
+          {
+            model: Event,
+            as: 'event',
+            include: [
+              {
+                model: Resource,
+                as: 'resource',
+                include: [
+                  {
+                    model: Facility,
+                    as: 'facility'
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            model: Program,
+            as: 'program'
+          },
+          {
+            model: Program,
+            as: 'assignedProgram'
+          },
+          {
+            model: Booking,
+            as: 'bookings',
+            include: [
+              {
+                model: User,
+                as: 'user',
+                attributes: ['user_id', 'username', 'email', 'first_name', 'last_name']
+              },
+              {
+                model: Program,
+                as: 'program'
+              }
+            ]
+          }
+        ]
+      });
+
+      if (!episode) {
+        return res.status(404).json({ 
+          message: 'Episode not found' 
+        });
+      }
+
+      const facility = episode.event.resource.facility;
+      const facilityTimezone = facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
+      const displayTimezone = timezone || facilityTimezone;
+
+      // Check if user has permission to view full details
+      let canViewFullDetails = req.user.user_type === 'admin';
+      
+      if (req.user.user_type === 'scheduler') {
+        const userPrograms = await Program.findAll({
+          where: { scheduler_user_id: req.user.user_id },
+          attributes: ['program_id']
+        });
+        
+        const programIds = userPrograms.map(p => p.program_id);
+        canViewFullDetails = programIds.includes(episode.program_id) || 
+                           programIds.includes(episode.assigned_to_program_id);
+      }
+
+      res.json({
+        episode: TimezoneUtils.convertEpisodeTimesForAPI(episode, displayTimezone),
+        canViewFullDetails,
+        facilityTimezone,
+        displayTimezone
+      });
+
+    } catch (error) {
+      console.error('Get episode error:', error);
+      res.status(500).json({ 
+        message: 'An error occurred while fetching episode',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  },
+
   // Get calendar resources (facilities and their rinks)
   async getCalendarResources(req, res) {
     try {
@@ -742,7 +1138,7 @@ const episodeController = {
         include: [{
           model: Facility,
           as: 'facility',
-          attributes: ['facility_id', 'facility_name']
+          attributes: ['facility_id', 'facility_name', 'facility_time_zone']
         }],
         order: [
           ['facility_id', 'ASC'],
@@ -756,6 +1152,7 @@ const episodeController = {
         title: resource.resource_name,
         facility: resource.facility.facility_name,
         facilityId: resource.facility_id,
+        facilityTimezone: resource.facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE,
         extendedProps: {
           resourceType: resource.resource_type_id,
           description: resource.resource_desc
@@ -774,557 +1171,11 @@ const episodeController = {
         error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
-  },
-
-  // Validate episode move/resize
-  async validateEpisodeMove(req, res) {
-    try {
-      const { 
-        episode_id, 
-        new_start_time, 
-        new_end_time, 
-        facility_id 
-      } = req.body;
-
-      // Validate required fields
-      if (!episode_id || !new_start_time || !new_end_time) {
-        return res.status(400).json({ 
-          message: 'Episode ID, new start time, and new end time are required' 
-        });
-      }
-
-      // Get the episode to validate
-      const episode = await Episode.findByPk(episode_id, {
-        include: [{
-          model: Event,
-          as: 'event',
-          include: [{
-            model: Resource,
-            as: 'resource',
-            include: [{
-              model: Facility,
-              as: 'facility'
-            }]
-          }]
-        }],
-      });
-
-      if (!episode) {
-        return res.status(404).json({ 
-          message: 'Episode not found' 
-        });
-      }
-
-      // Check permission
-      if (episode.event.resource.facility.admin_user_id !== req.user.user_id) {
-        return res.status(403).json({ 
-          message: 'You do not have permission to move this episode' 
-        });
-      }
-
-      // Basic validation
-      const newStart = new Date(new_start_time);
-      const newEnd = new Date(new_end_time);
-      
-      if (isNaN(newStart) || isNaN(newEnd)) {
-        return res.status(400).json({ 
-          message: 'Invalid date format' 
-        });
-      }
-      
-      if (newStart >= newEnd) {
-        return res.status(400).json({ 
-          message: 'End time must be after start time' 
-        });
-      }
-
-      if (newStart < new Date()) {
-        return res.status(400).json({ 
-          message: 'Cannot move episode to the past' 
-        });
-      }
-
-      const conflicts = [];
-      const warnings = [];
-
-      // Check if episode can be moved
-      if (episode.episode_status === 'booked') {
-        conflicts.push({
-          type: 'booked_episode',
-          severity: 'error',
-          title: 'Booked Episode',
-          description: 'Cannot move episodes that are already booked'
-        });
-      }
-
-      if (new Date(episode.episode_start_date_time) < new Date()) {
-        conflicts.push({
-          type: 'past_episode',
-          severity: 'error',
-          title: 'Past Episode',
-          description: 'Cannot move episodes that have already started'
-        });
-      }
-
-      // Check for overlapping episodes on the same resource
-      const overlappingEpisode = await Episode.findOne({
-        where: {
-          episode_id: { [Op.ne]: episode_id },
-          [Op.or]: [
-            {
-              episode_start_date_time: {
-                [Op.between]: [newStart, newEnd]
-              }
-            },
-            {
-              episode_end_date_time: {
-                [Op.between]: [newStart, newEnd]
-              }
-            },
-            {
-              [Op.and]: [
-                {
-                  episode_start_date_time: {
-                    [Op.lte]: newStart
-                  }
-                },
-                {
-                  episode_end_date_time: {
-                    [Op.gte]: newEnd
-                  }
-                }
-              ]
-            }
-          ]
-        },
-        include: [{
-          model: Event,
-          as: 'event',
-          where: { resource_id: episode.event.resource_id },
-          required: true
-        }]
-      });
-
-      if (overlappingEpisode) {
-        conflicts.push({
-          type: 'overlap',
-          severity: 'error',
-          title: 'Schedule Overlap',
-          description: `Conflicts with existing ice time: ${overlappingEpisode.episode_title}`,
-          time: `${overlappingEpisode.episode_start_date_time.toLocaleString()} - ${overlappingEpisode.episode_end_date_time.toLocaleString()}`
-        });
-      }
-
-      // Check business hours (basic validation)
-      const facility = episode.event.resource.facility;
-      const dailyStart = facility.facility_daily_start_time || '06:00:00';
-      const dailyEnd = facility.facility_daily_end_time || '23:00:00';
-      
-      const startTimeStr = newStart.toTimeString().slice(0, 8);
-      const endTimeStr = newEnd.toTimeString().slice(0, 8);
-
-      if (startTimeStr < dailyStart || endTimeStr > dailyEnd) {
-        conflicts.push({
-          type: 'business_hours',
-          severity: 'error',
-          title: 'Outside Business Hours',
-          description: `Facility hours are ${dailyStart} - ${dailyEnd}`,
-          time: `${new_start_time} - ${new_end_time}`
-        });
-      }
-
-      // Duration validation
-      const duration = Math.round((newEnd - newStart) / (1000 * 60));
-      if (duration < 30) {
-        conflicts.push({
-          type: 'duration_too_short',
-          severity: 'error',
-          title: 'Duration Too Short',
-          description: 'Ice time must be at least 30 minutes long'
-        });
-      }
-
-      if (duration > 480) {
-        conflicts.push({
-          type: 'duration_too_long',
-          severity: 'error',
-          title: 'Duration Too Long',
-          description: 'Ice time cannot exceed 8 hours'
-        });
-      }
-
-      // Warning for very long durations
-      if (duration > 240 && duration <= 480) {
-        warnings.push({
-          type: 'duration_long',
-          severity: 'warning',
-          title: 'Long Duration',
-          description: 'This is a very long ice time slot'
-        });
-      }
-
-      res.json({
-        valid: conflicts.length === 0,
-        conflicts,
-        warnings,
-        businessRuleViolations: conflicts.map(c => c.description)
-      });
-
-    } catch (error) {
-      console.error('Validate episode move error:', error);
-      res.status(500).json({ 
-        message: 'An error occurred while validating the move'
-      });
-    }
-  },
-
-  // Move episode
-  async moveEpisode(req, res) {
-    const transaction = await sequelize.transaction();
-    
-    try {
-      const { id } = req.params;
-      const { new_start_time, new_end_time, new_duration } = req.body;
-
-      // Validate input
-      if (!new_start_time || !new_end_time) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'New start time and end time are required' 
-        });
-      }
-
-      const episode = await Episode.findByPk(id, {
-        include: [{
-          model: Event,
-          as: 'event',
-          include: [{
-            model: Resource,
-            as: 'resource',
-            include: [{
-              model: Facility,
-              as: 'facility'
-            }]
-          }]
-        }],
-        transaction
-      });
-
-      if (!episode) {
-        await transaction.rollback();
-        return res.status(404).json({ 
-          message: 'Episode not found' 
-        });
-      }
-
-      // Check permission
-      if (episode.event.resource.facility.admin_user_id !== req.user.user_id) {
-        await transaction.rollback();
-        return res.status(403).json({ 
-          message: 'You do not have permission to move this episode' 
-        });
-      }
-
-      // Validate dates
-      const newStart = new Date(new_start_time);
-      const newEnd = new Date(new_end_time);
-      
-      if (isNaN(newStart) || isNaN(newEnd)) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Invalid date format' 
-        });
-      }
-
-      if (newStart >= newEnd) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'End time must be after start time' 
-        });
-      }
-
-      if (newStart < new Date()) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Cannot move episode to the past' 
-        });
-      }
-
-      // Check if episode can be moved
-      if (episode.episode_status === 'booked') {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Cannot move booked episodes' 
-        });
-      }
-
-      if (new Date(episode.episode_start_date_time) < new Date()) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Cannot move episodes that have already started' 
-        });
-      }
-
-      // Calculate new duration
-      const duration = new_duration || Math.round((newEnd - newStart) / (1000 * 60));
-
-      // Update the episode
-      await episode.update({
-        episode_start_date_time: newStart,
-        episode_end_date_time: newEnd,
-        episode_duration: duration,
-        updated_by: req.user.username
-      }, { transaction });
-
-      await transaction.commit();
-
-      // Reload with associations
-      const updatedEpisode = await Episode.findByPk(id, {
-        include: [
-          {
-            model: Event,
-            as: 'event',
-            include: [{
-              model: Resource,
-              as: 'resource',
-              include: [{
-                model: Facility,
-                as: 'facility'
-              }]
-            }]
-          }
-        ]
-      });
-
-      res.json({
-        message: 'Episode moved successfully',
-        episode: updatedEpisode
-      });
-
-    } catch (error) {
-      await transaction.rollback();
-      console.error('Move episode error:', error);
-      res.status(500).json({ 
-        message: 'An error occurred while moving the episode',
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
-    }
-  },
-
-  // Resize episode
-  async resizeEpisode(req, res) {
-    const transaction = await sequelize.transaction();
-    
-    try {
-      const { id } = req.params;
-      const { new_end_time, new_duration } = req.body;
-
-      // Validate input
-      if (!new_end_time) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'New end time is required' 
-        });
-      }
-
-      const episode = await Episode.findByPk(id, {
-        include: [{
-          model: Event,
-          as: 'event',
-          include: [{
-            model: Resource,
-            as: 'resource',
-            include: [{
-              model: Facility,
-              as: 'facility'
-            }]
-          }]
-        }],
-        transaction
-      });
-
-      if (!episode) {
-        await transaction.rollback();
-        return res.status(404).json({ 
-          message: 'Episode not found' 
-        });
-      }
-
-      // Check permission
-      if (episode.event.resource.facility.admin_user_id !== req.user.user_id) {
-        await transaction.rollback();
-        return res.status(403).json({ 
-          message: 'You do not have permission to resize this episode' 
-        });
-      }
-
-      // Validate new end time
-      const newEnd = new Date(new_end_time);
-      const startTime = new Date(episode.episode_start_date_time);
-      
-      if (isNaN(newEnd)) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Invalid end time format' 
-        });
-      }
-
-      if (newEnd <= startTime) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'End time must be after start time' 
-        });
-      }
-
-      // Check if episode can be resized
-      if (episode.episode_status === 'booked') {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Cannot resize booked episodes' 
-        });
-      }
-
-      if (startTime < new Date()) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Cannot resize episodes that have already started' 
-        });
-      }
-
-      // Calculate new duration
-      const duration = new_duration || Math.round((newEnd - startTime) / (1000 * 60));
-
-      // Validate duration
-      if (duration < 30) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Ice time must be at least 30 minutes long' 
-        });
-      }
-
-      if (duration > 480) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          message: 'Ice time cannot exceed 8 hours' 
-        });
-      }
-
-      // Update the episode
-      await episode.update({
-        episode_end_date_time: newEnd,
-        episode_duration: duration,
-        updated_by: req.user.username
-      }, { transaction });
-
-      await transaction.commit();
-
-      // Reload with associations
-      const updatedEpisode = await Episode.findByPk(id, {
-        include: [
-          {
-            model: Event,
-            as: 'event',
-            include: [{
-              model: Resource,
-              as: 'resource',
-              include: [{
-                model: Facility,
-                as: 'facility'
-              }]
-            }]
-          }
-        ]
-      });
-
-      res.json({
-        message: 'Episode resized successfully',
-        episode: updatedEpisode
-      });
-
-    } catch (error) {
-      await transaction.rollback();
-      console.error('Resize episode error:', error);
-      res.status(500).json({ 
-        message: 'An error occurred while resizing the episode',
-        error: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
-    }
-  },
-
-  // Validate batch moves
-  async validateBatchMoves(req, res) {
-    try {
-      const { moves } = req.body;
-
-      if (!Array.isArray(moves) || moves.length === 0) {
-        return res.status(400).json({ 
-          message: 'Moves array is required and cannot be empty' 
-        });
-      }
-
-      const results = [];
-
-      for (const move of moves) {
-        const { episode_id, new_start_time, new_end_time } = move;
-        
-        // Validate each move individually
-        const validationResult = await episodeController.validateEpisodeMove({
-          body: { episode_id, new_start_time, new_end_time },
-          user: req.user
-        });
-
-        results.push({
-          episode_id,
-          valid: validationResult.valid || false,
-          conflicts: validationResult.conflicts || [],
-          warnings: validationResult.warnings || []
-        });
-      }
-
-      // Check for cross-episode conflicts
-      const overallConflicts = [];
-      
-      // Simple check for time overlaps between moved episodes
-      for (let i = 0; i < moves.length - 1; i++) {
-        for (let j = i + 1; j < moves.length; j++) {
-          const move1 = moves[i];
-          const move2 = moves[j];
-          
-          const start1 = new Date(move1.new_start_time);
-          const end1 = new Date(move1.new_end_time);
-          const start2 = new Date(move2.new_start_time);
-          const end2 = new Date(move2.new_end_time);
-          
-          // Check if they overlap
-          if (start1 < end2 && start2 < end1) {
-            overallConflicts.push({
-              type: 'batch_overlap',
-              episodes: [move1.episode_id, move2.episode_id],
-              description: `Episodes ${move1.episode_id} and ${move2.episode_id} would overlap after moving`
-            });
-          }
-        }
-      }
-
-      const allValid = results.every(r => r.valid) && overallConflicts.length === 0;
-
-      res.json({
-        valid: allValid,
-        results,
-        overallConflicts
-      });
-
-    } catch (error) {
-      console.error('Validate batch moves error:', error);
-      res.status(500).json({ 
-        message: 'An error occurred while validating batch moves'
-      });
-    }
   }
 };
 
-// Helper function to get status color
-function getStatusColor(status) {
+// Helper function to get status color with admin adjustments
+function getStatusColor(status, userType, episode = null) {
   const statusColors = {
     'available': '#FFFFFF',      // White: Unassigned
     'assigned': '#FFEB3B',       // Yellow: Assigned Pending
@@ -1334,7 +1185,35 @@ function getStatusColor(status) {
     'cancelled': '#9E9E9E'       // Gray: Unavailable
   };
   
+  // For admin view, assigned episodes that are reserved (not just pending) should be blue
+  if (userType === 'admin' && status === 'assigned' && episode?.assigned_to_program_id) {
+    return '#2196F3'; // Blue: Assigned Reserved
+  }
+  
   return statusColors[status] || '#FFFFFF';
+}
+
+// Helper function to check if episode can be edited
+function canEditEpisode(episode, user) {
+  if (!episode || !user) return false;
+  
+  // Only admins can edit for now
+  if (user.user_type !== 'admin') return false;
+  
+  // Cannot edit past episodes
+  if (TimezoneUtils.convertToFacilityTime(episode.episode_start_date_time).isBefore(TimezoneUtils.getCurrentTime())) {
+    return false;
+  }
+  
+  // Cannot edit booked episodes
+  if (episode.episode_status === 'booked') return false;
+  
+  // Cannot edit if it has active bookings
+  if (episode.bookings && episode.bookings.some(b => ['pending', 'approved'].includes(b.booking_status))) {
+    return false;
+  }
+  
+  return true;
 }
 
 module.exports = episodeController;

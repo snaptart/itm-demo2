@@ -1,20 +1,59 @@
-// frontend/src/utils/dateUtils.js
+// frontend/src/utils/dateUtils.js (Enhanced with Timezone Support)
 
 export const dateUtils = {
-  // Format date for API calls
+  // Default facility timezone (can be overridden per facility)
+  DEFAULT_TIMEZONE: 'America/Chicago',
+
+  // Format date for API calls (always UTC)
   formatForAPI(date) {
     if (!date) return null;
-    return date.toISOString();
+    return new Date(date).toISOString();
   },
 
-  // Parse API date string
-  parseFromAPI(dateString) {
+  // Parse API date string (UTC) and convert to facility timezone for display
+  parseFromAPI(dateString, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!dateString) return null;
-    return new Date(dateString);
+    const utcDate = new Date(dateString);
+    return this.convertToFacilityTime(utcDate, facilityTimezone);
   },
 
-  // Format date for display
-  formatForDisplay(date, options = {}) {
+  // Convert UTC time to facility local time
+  convertToFacilityTime(utcTime, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!utcTime) return null;
+    
+    try {
+      // Create a new date in the facility's timezone
+      const facilityTime = new Date(utcTime.toLocaleString('en-US', { 
+        timeZone: facilityTimezone 
+      }));
+      return facilityTime;
+    } catch (error) {
+      console.warn('Timezone conversion failed:', error);
+      return new Date(utcTime); // Fallback to original time
+    }
+  },
+
+  // Convert facility local time to UTC for storage
+  convertToUTC(facilityTime, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!facilityTime) return null;
+    
+    try {
+      // Get the timezone offset for the facility
+      const tempDate = new Date();
+      const utcTime = new Date(tempDate.toLocaleString('en-US', { timeZone: 'UTC' }));
+      const facilityTimeTemp = new Date(tempDate.toLocaleString('en-US', { timeZone: facilityTimezone }));
+      const offset = utcTime.getTime() - facilityTimeTemp.getTime();
+      
+      // Apply offset to convert facility time to UTC
+      return new Date(facilityTime.getTime() + offset);
+    } catch (error) {
+      console.warn('UTC conversion failed:', error);
+      return new Date(facilityTime); // Fallback
+    }
+  },
+
+  // Format date for display in facility timezone
+  formatForDisplay(date, facilityTimezone = this.DEFAULT_TIMEZONE, options = {}) {
     if (!date) return 'N/A';
     
     const defaultOptions = {
@@ -23,176 +62,235 @@ export const dateUtils = {
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
-      hour12: true
+      hour12: true,
+      timeZone: facilityTimezone
     };
 
-    return new Date(date).toLocaleString('en-US', { ...defaultOptions, ...options });
+    try {
+      return new Date(date).toLocaleString('en-US', { ...defaultOptions, ...options });
+    } catch (error) {
+      console.warn('Display format failed:', error);
+      return new Date(date).toLocaleString('en-US', defaultOptions);
+    }
   },
 
-  // Format time only
-  formatTimeOnly(date) {
+  // Format time only in facility timezone
+  formatTimeOnly(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return 'N/A';
-    return new Date(date).toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
+    
+    try {
+      return new Date(date).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: facilityTimezone
+      });
+    } catch (error) {
+      console.warn('Time format failed:', error);
+      return new Date(date).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    }
   },
 
-  // Format date only
-  formatDateOnly(date) {
+  // Format date only in facility timezone
+  formatDateOnly(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
     if (!date) return 'N/A';
-    return new Date(date).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
+    
+    try {
+      return new Date(date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        timeZone: facilityTimezone
+      });
+    } catch (error) {
+      console.warn('Date format failed:', error);
+      return new Date(date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    }
   },
 
-  // Check if date is in the past
-  isPast(date) {
-    return new Date(date) < new Date();
+  // Create date in facility timezone from date and time inputs
+  createFacilityDateTime(dateStr, timeStr, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!dateStr || !timeStr) return null;
+    
+    try {
+      // Combine date and time strings
+      const dateTimeStr = `${dateStr}T${timeStr}:00`;
+      
+      // Create date as if it's in the facility timezone
+      const localDate = new Date(dateTimeStr);
+      
+      // Convert to UTC for storage
+      return this.convertToUTC(localDate, facilityTimezone);
+    } catch (error) {
+      console.error('Create facility datetime failed:', error);
+      return null;
+    }
   },
 
-  // Check if date is today
-  isToday(date) {
-    const today = new Date();
-    const checkDate = new Date(date);
-    return checkDate.toDateString() === today.toDateString();
+  // Extract date string for input fields (in facility timezone)
+  extractDateString(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return '';
+    
+    try {
+      const facilityTime = this.convertToFacilityTime(date, facilityTimezone);
+      return facilityTime.toISOString().split('T')[0];
+    } catch (error) {
+      console.warn('Extract date string failed:', error);
+      return new Date(date).toISOString().split('T')[0];
+    }
   },
 
-  // Check if date is this week
-  isThisWeek(date) {
+  // Extract time string for input fields (in facility timezone)
+  extractTimeString(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return '';
+    
+    try {
+      const facilityTime = this.convertToFacilityTime(date, facilityTimezone);
+      return facilityTime.toTimeString().slice(0, 5); // HH:MM format
+    } catch (error) {
+      console.warn('Extract time string failed:', error);
+      return new Date(date).toTimeString().slice(0, 5);
+    }
+  },
+
+  // Check if date is in the past (considering facility timezone)
+  isPast(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return false;
+    
     const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
+    const facilityNow = this.convertToFacilityTime(now, facilityTimezone);
+    const checkDate = this.convertToFacilityTime(new Date(date), facilityTimezone);
+    
+    return checkDate < facilityNow;
+  },
+
+  // Check if date is today (in facility timezone)
+  isToday(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return false;
+    
+    const today = new Date();
+    const facilityToday = this.convertToFacilityTime(today, facilityTimezone);
+    const checkDate = this.convertToFacilityTime(new Date(date), facilityTimezone);
+    
+    return this.extractDateString(facilityToday, facilityTimezone) === 
+           this.extractDateString(checkDate, facilityTimezone);
+  },
+
+  // Check if date is this week (in facility timezone)
+  isThisWeek(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    const now = new Date();
+    const facilityNow = this.convertToFacilityTime(now, facilityTimezone);
+    const startOfWeek = new Date(facilityNow);
+    startOfWeek.setDate(facilityNow.getDate() - facilityNow.getDay());
     startOfWeek.setHours(0, 0, 0, 0);
     
     const endOfWeek = new Date(startOfWeek);
     endOfWeek.setDate(startOfWeek.getDate() + 6);
     endOfWeek.setHours(23, 59, 59, 999);
     
-    const checkDate = new Date(date);
+    const checkDate = this.convertToFacilityTime(new Date(date), facilityTimezone);
     return checkDate >= startOfWeek && checkDate <= endOfWeek;
   },
 
-  // Add duration to date
-  addDuration(date, minutes) {
-    const newDate = new Date(date);
-    newDate.setMinutes(newDate.getMinutes() + minutes);
-    return newDate;
+  // Add duration to date (preserving timezone context)
+  addDuration(date, minutes, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return null;
+    
+    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
+    facilityTime.setMinutes(facilityTime.getMinutes() + minutes);
+    return this.convertToUTC(facilityTime, facilityTimezone);
   },
 
   // Calculate duration between two dates in minutes
   getDuration(startDate, endDate) {
+    if (!startDate || !endDate) return 0;
     return Math.round((new Date(endDate) - new Date(startDate)) / (1000 * 60));
   },
 
-  // Round to nearest interval
-  roundToInterval(date, intervalMinutes = 15) {
-    const roundedDate = new Date(date);
-    const minutes = roundedDate.getMinutes();
+  // Round to nearest interval in facility timezone
+  roundToInterval(date, intervalMinutes = 15, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return null;
+    
+    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
+    const minutes = facilityTime.getMinutes();
     const remainder = minutes % intervalMinutes;
     
-    if (remainder === 0) return roundedDate;
+    if (remainder === 0) {
+      return this.convertToUTC(facilityTime, facilityTimezone);
+    }
     
     if (remainder < intervalMinutes / 2) {
-      roundedDate.setMinutes(minutes - remainder);
+      facilityTime.setMinutes(minutes - remainder);
     } else {
-      roundedDate.setMinutes(minutes + (intervalMinutes - remainder));
+      facilityTime.setMinutes(minutes + (intervalMinutes - remainder));
     }
     
-    roundedDate.setSeconds(0);
-    roundedDate.setMilliseconds(0);
+    facilityTime.setSeconds(0);
+    facilityTime.setMilliseconds(0);
     
-    return roundedDate;
+    return this.convertToUTC(facilityTime, facilityTimezone);
   },
 
-  // Get start of day
-  getStartOfDay(date) {
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    return startOfDay;
-  },
-
-  // Get end of day
-  getEndOfDay(date) {
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
-    return endOfDay;
-  },
-
-  // Get start of week (Sunday)
-  getStartOfWeek(date) {
-    const startOfWeek = new Date(date);
-    const day = startOfWeek.getDay();
-    startOfWeek.setDate(startOfWeek.getDate() - day);
-    return this.getStartOfDay(startOfWeek);
-  },
-
-  // Get end of week (Saturday)
-  getEndOfWeek(date) {
-    const endOfWeek = new Date(date);
-    const day = endOfWeek.getDay();
-    endOfWeek.setDate(endOfWeek.getDate() + (6 - day));
-    return this.getEndOfDay(endOfWeek);
-  },
-
-  // Get start of month
-  getStartOfMonth(date) {
-    const startOfMonth = new Date(date);
-    startOfMonth.setDate(1);
-    return this.getStartOfDay(startOfMonth);
-  },
-
-  // Get end of month
-  getEndOfMonth(date) {
-    const endOfMonth = new Date(date);
-    endOfMonth.setMonth(endOfMonth.getMonth() + 1);
-    endOfMonth.setDate(0);
-    return this.getEndOfDay(endOfMonth);
-  },
-
-  // Check if two date ranges overlap
-  doRangesOverlap(start1, end1, start2, end2) {
-    const s1 = new Date(start1);
-    const e1 = new Date(end1);
-    const s2 = new Date(start2);
-    const e2 = new Date(end2);
+  // Get start/end of day in facility timezone
+  getStartOfDay(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return null;
     
-    return s1 < e2 && s2 < e1;
+    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
+    facilityTime.setHours(0, 0, 0, 0);
+    return this.convertToUTC(facilityTime, facilityTimezone);
   },
 
-  // Get business day (skip weekends)
-  getNextBusinessDay(date, skipWeekends = true) {
-    const nextDay = new Date(date);
-    nextDay.setDate(nextDay.getDate() + 1);
+  getEndOfDay(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return null;
     
-    if (skipWeekends) {
-      while (nextDay.getDay() === 0 || nextDay.getDay() === 6) {
-        nextDay.setDate(nextDay.getDate() + 1);
-      }
+    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
+    facilityTime.setHours(23, 59, 59, 999);
+    return this.convertToUTC(facilityTime, facilityTimezone);
+  },
+
+  // Get start/end of week in facility timezone
+  getStartOfWeek(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return null;
+    
+    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
+    const day = facilityTime.getDay();
+    facilityTime.setDate(facilityTime.getDate() - day);
+    return this.getStartOfDay(facilityTime, facilityTimezone);
+  },
+
+  getEndOfWeek(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return null;
+    
+    const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
+    const day = facilityTime.getDay();
+    facilityTime.setDate(facilityTime.getDate() + (6 - day));
+    return this.getEndOfDay(facilityTime, facilityTimezone);
+  },
+
+  // Validate date range in facility timezone
+  validateDateRange(startDate, endDate, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    const errors = [];
+    
+    if (!startDate) {
+      errors.push('Start date is required');
+      return { isValid: false, errors };
     }
     
-    return nextDay;
-  },
-
-  // Convert to timezone
-  convertToTimezone(date, timezone = 'America/Chicago') {
-    try {
-      return new Date(date).toLocaleString('en-US', { timeZone: timezone });
-    } catch (error) {
-      console.warn('Timezone conversion failed:', error);
-      return date;
+    if (!endDate) {
+      errors.push('End date is required');
+      return { isValid: false, errors };
     }
-  },
-
-  // Validate date range
-  validateDateRange(startDate, endDate) {
+    
     const start = new Date(startDate);
     const end = new Date(endDate);
-    
-    const errors = [];
     
     if (isNaN(start.getTime())) {
       errors.push('Invalid start date');
@@ -202,11 +300,15 @@ export const dateUtils = {
       errors.push('Invalid end date');
     }
     
+    if (errors.length > 0) {
+      return { isValid: false, errors };
+    }
+    
     if (start >= end) {
       errors.push('End date must be after start date');
     }
     
-    if (this.isPast(start)) {
+    if (this.isPast(start, facilityTimezone)) {
       errors.push('Start date cannot be in the past');
     }
     
@@ -216,7 +318,7 @@ export const dateUtils = {
     };
   },
 
-  // Format duration
+  // Format duration for display
   formatDuration(minutes) {
     if (!minutes || minutes <= 0) return '0 min';
     
@@ -232,10 +334,14 @@ export const dateUtils = {
     }
   },
 
-  // Get relative time (e.g., "2 hours ago", "in 30 minutes")
-  getRelativeTime(date) {
+  // Get relative time in facility timezone
+  getRelativeTime(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return 'N/A';
+    
     const now = new Date();
-    const diffMs = new Date(date) - now;
+    const facilityNow = this.convertToFacilityTime(now, facilityTimezone);
+    const facilityDate = this.convertToFacilityTime(new Date(date), facilityTimezone);
+    const diffMs = facilityDate - facilityNow;
     const diffMins = Math.round(diffMs / (1000 * 60));
     
     if (diffMins < 0) {
@@ -262,50 +368,39 @@ export const dateUtils = {
     }
   },
 
-  // Create date range array
-  createDateRange(startDate, endDate, intervalDays = 1) {
-    const dates = [];
-    const current = new Date(startDate);
-    const end = new Date(endDate);
-    
-    while (current <= end) {
-      dates.push(new Date(current));
-      current.setDate(current.getDate() + intervalDays);
+  // Get timezone display name
+  getTimezoneDisplayName(timezone) {
+    try {
+      const now = new Date();
+      return now.toLocaleString('en-US', {
+        timeZone: timezone,
+        timeZoneName: 'short'
+      }).split(' ').pop();
+    } catch (error) {
+      console.warn('Timezone display name failed:', error);
+      return timezone;
     }
-    
-    return dates;
   },
 
-  // Check if date is within business hours
-  isWithinBusinessHours(date, businessHours) {
-    if (!businessHours) return true;
-    
-    const dayOfWeek = new Date(date).getDay();
-    const dayHours = businessHours[dayOfWeek];
-    
-    if (!dayHours || dayHours.isClosed) return false;
-    
-    const hour = new Date(date).getHours();
-    const minute = new Date(date).getMinutes();
-    const timeInMinutes = hour * 60 + minute;
-    
-    const openTime = this.parseTimeString(dayHours.open);
-    const closeTime = this.parseTimeString(dayHours.close);
-    
-    return timeInMinutes >= openTime && timeInMinutes <= closeTime;
+  // Get common US timezones for facility configuration
+  getCommonTimezones() {
+    return [
+      { value: 'America/New_York', label: 'Eastern Time (ET)' },
+      { value: 'America/Chicago', label: 'Central Time (CT)' },
+      { value: 'America/Denver', label: 'Mountain Time (MT)' },
+      { value: 'America/Los_Angeles', label: 'Pacific Time (PT)' },
+      { value: 'America/Anchorage', label: 'Alaska Time (AKT)' },
+      { value: 'Pacific/Honolulu', label: 'Hawaii Time (HST)' }
+    ];
   },
 
-  // Parse time string (e.g., "09:00") to minutes since midnight
-  parseTimeString(timeStr) {
-    if (!timeStr) return 0;
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    return hours * 60 + minutes;
-  },
-
-  // Format time string from minutes since midnight
-  formatTimeFromMinutes(minutes) {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+  // Validate timezone string
+  isValidTimezone(timezone) {
+    try {
+      new Date().toLocaleString('en-US', { timeZone: timezone });
+      return true;
+    } catch (error) {
+      return false;
+    }
   }
 };

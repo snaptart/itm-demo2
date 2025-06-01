@@ -1,5 +1,6 @@
-// frontend/src/services/calendarService.js (Fixed for proper drag-drop)
+// frontend/src/services/calendarService.js (Enhanced with Timezone Support)
 import api from './api';
+import { dateUtils } from '../utils/dateUtils';
 
 // Retry configuration
 const MAX_RETRIES = 3;
@@ -41,16 +42,25 @@ const retryOperation = async (operation, retries = MAX_RETRIES) => {
 };
 
 const calendarService = {
-  // Get episodes for calendar view
+  // Get episodes for calendar view with timezone support
   async getEpisodes(params = {}, options = {}) {
     try {
       const operation = () => api.get('/api/episodes', { 
-        params,
+        params: {
+          ...params,
+          timezone: options.timezone // Pass client timezone preference
+        },
         signal: options.signal // Support request cancellation
       });
       
       const response = await retryOperation(operation);
-      return { success: true, data: response.data };
+      return { 
+        success: true, 
+        data: {
+          ...response.data,
+          facilityTimezone: response.data.timezone // Server returns facility timezone
+        }
+      };
     } catch (error) {
       // Check if request was cancelled
       if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
@@ -80,10 +90,12 @@ const calendarService = {
     }
   },
 
-  // Get single episode details
-  async getEpisodeById(id) {
+  // Get single episode details with timezone support
+  async getEpisodeById(id, timezone = null) {
     try {
-      const operation = () => api.get(`/api/episodes/${id}`);
+      const operation = () => api.get(`/api/episodes/${id}`, { 
+        params: { timezone } 
+      });
       const response = await retryOperation(operation);
       return { success: true, data: response.data };
     } catch (error) {
@@ -95,13 +107,23 @@ const calendarService = {
     }
   },
 
-  // Validate episode move/resize
-  async validateEpisodeMove(episodeId, newStartTime, newEndTime, facilityId) {
+  // Validate episode move/resize with timezone conversion
+  async validateEpisodeMove(episodeId, newStartTime, newEndTime, facilityId, facilityTimezone = null) {
     try {
+      // Convert times to facility timezone if needed
+      let convertedStartTime = newStartTime;
+      let convertedEndTime = newEndTime;
+      
+      if (facilityTimezone) {
+        // If we have a specific facility timezone, ensure times are converted properly
+        convertedStartTime = dateUtils.convertToUTC(new Date(newStartTime), facilityTimezone);
+        convertedEndTime = dateUtils.convertToUTC(new Date(newEndTime), facilityTimezone);
+      }
+
       const response = await api.post('/api/episodes/validate-move', {
         episode_id: episodeId,
-        new_start_time: newStartTime,
-        new_end_time: newEndTime,
+        new_start_time: convertedStartTime,
+        new_end_time: convertedEndTime,
         facility_id: facilityId
       });
       
@@ -123,15 +145,24 @@ const calendarService = {
     }
   },
 
-  // Move episode with drag and drop
-  async moveEpisode(episodeId, newStartTime, newEndTime) {
+  // Move episode with drag and drop and timezone support
+  async moveEpisode(episodeId, newStartTime, newEndTime, facilityTimezone = null) {
     try {
+      // Convert times if facility timezone is provided
+      let convertedStartTime = newStartTime;
+      let convertedEndTime = newEndTime;
+      
+      if (facilityTimezone) {
+        convertedStartTime = dateUtils.convertToUTC(new Date(newStartTime), facilityTimezone);
+        convertedEndTime = dateUtils.convertToUTC(new Date(newEndTime), facilityTimezone);
+      }
+
       // Calculate new duration
-      const duration = Math.round((new Date(newEndTime) - new Date(newStartTime)) / (1000 * 60));
+      const duration = Math.round((new Date(convertedEndTime) - new Date(convertedStartTime)) / (1000 * 60));
 
       const response = await api.put(`/api/episodes/${episodeId}/move`, {
-        new_start_time: newStartTime,
-        new_end_time: newEndTime,
+        new_start_time: convertedStartTime,
+        new_end_time: convertedEndTime,
         new_duration: duration
       });
       
@@ -145,21 +176,18 @@ const calendarService = {
     }
   },
 
-  // Resize episode
-  async resizeEpisode(episodeId, newEndTime) {
+  // Resize episode with timezone support
+  async resizeEpisode(episodeId, newEndTime, facilityTimezone = null) {
     try {
-      // Get current episode to calculate duration
-      const episodeResult = await this.getEpisodeById(episodeId);
-      if (!episodeResult.success) {
-        throw new Error('Failed to get episode details');
+      // Convert end time if facility timezone is provided
+      let convertedEndTime = newEndTime;
+      
+      if (facilityTimezone) {
+        convertedEndTime = dateUtils.convertToUTC(new Date(newEndTime), facilityTimezone);
       }
 
-      const startTime = episodeResult.data.episode.episode_start_date_time;
-      const duration = Math.round((new Date(newEndTime) - new Date(startTime)) / (1000 * 60));
-
       const response = await api.put(`/api/episodes/${episodeId}/resize`, {
-        new_end_time: newEndTime,
-        new_duration: duration
+        new_end_time: convertedEndTime
       });
       
       return { success: true, data: response.data };
@@ -173,13 +201,27 @@ const calendarService = {
   },
 
   // Batch validate multiple moves
-  async validateBatchMoves(moves) {
+  async validateBatchMoves(moves, facilityTimezone = null) {
     try {
+      // Convert times for all moves if facility timezone is provided
+      const convertedMoves = moves.map(move => {
+        if (facilityTimezone) {
+          return {
+            ...move,
+            newStartTime: dateUtils.convertToUTC(new Date(move.newStartTime), facilityTimezone),
+            newEndTime: dateUtils.convertToUTC(new Date(move.newEndTime), facilityTimezone)
+          };
+        }
+        return move;
+      });
+
       const response = await api.post('/api/episodes/validate-batch-moves', {
-        moves: moves.map(move => ({
+        moves: convertedMoves.map(move => ({
           episode_id: move.episodeId,
           new_start_time: move.newStartTime,
-          new_end_time: move.newEndTime
+          new_end_time: move.newEndTime,
+          resource_id: move.resourceId,
+          facility_id: move.facilityId
         }))
       });
 
@@ -200,8 +242,8 @@ const calendarService = {
     }
   },
 
-  // Create new episode (Admin only)
-  async createEpisode(episodeData) {
+  // Create new episode (Admin only) with timezone support
+  async createEpisode(episodeData, facilityTimezone = null) {
     try {
       // Validate required fields
       if (!episodeData.event_id || !episodeData.episode_start_date_time || !episodeData.episode_end_date_time) {
@@ -211,7 +253,22 @@ const calendarService = {
         };
       }
       
-      const response = await api.post('/api/episodes', episodeData);
+      // Convert times if facility timezone is provided
+      let convertedData = { ...episodeData };
+      
+      if (facilityTimezone) {
+        convertedData.episode_start_date_time = dateUtils.convertToUTC(
+          new Date(episodeData.episode_start_date_time), 
+          facilityTimezone
+        );
+        convertedData.episode_end_date_time = dateUtils.convertToUTC(
+          new Date(episodeData.episode_end_date_time), 
+          facilityTimezone
+        );
+        convertedData.facility_timezone = facilityTimezone;
+      }
+      
+      const response = await api.post('/api/episodes', convertedData);
       return { success: true, data: response.data };
     } catch (error) {
       console.error('Create episode error:', error);
@@ -222,37 +279,36 @@ const calendarService = {
     }
   },
 
-  // Update episode (Admin only)
-  async updateEpisode(id, episodeData) {
+  // Update episode (Admin only) with timezone support
+  async updateEpisode(id, episodeData, facilityTimezone = null) {
     try {
+      // Convert datetime fields if facility timezone is provided
+      let convertedData = { ...episodeData };
+      
+      if (facilityTimezone) {
+        if (episodeData.episode_start_date_time) {
+          convertedData.episode_start_date_time = dateUtils.convertToUTC(
+            new Date(episodeData.episode_start_date_time), 
+            facilityTimezone
+          );
+        }
+        if (episodeData.episode_end_date_time) {
+          convertedData.episode_end_date_time = dateUtils.convertToUTC(
+            new Date(episodeData.episode_end_date_time), 
+            facilityTimezone
+          );
+        }
+      }
+      
       // Clean up the data before sending
-      const cleanData = {};
-      
-      // Only include fields that are defined
-      if (episodeData.episode_title !== undefined) {
-        cleanData.episode_title = episodeData.episode_title?.trim();
-      }
-      
-      if (episodeData.episode_description !== undefined) {
-        cleanData.episode_description = episodeData.episode_description?.trim();
-      }
-      
-      if (episodeData.episode_price !== undefined) {
-        cleanData.episode_price = episodeData.episode_price;
-      }
-      
-      if (episodeData.episode_status !== undefined) {
-        cleanData.episode_status = episodeData.episode_status;
-      }
-
-      // Handle datetime updates for drag-drop
-      if (episodeData.episode_start_date_time !== undefined) {
-        cleanData.episode_start_date_time = episodeData.episode_start_date_time;
-      }
-
-      if (episodeData.episode_end_date_time !== undefined) {
-        cleanData.episode_end_date_time = episodeData.episode_end_date_time;
-      }
+      const cleanData = {
+        episode_title: convertedData.episode_title?.trim(),
+        episode_description: convertedData.episode_description?.trim(),
+        episode_price: convertedData.episode_price,
+        episode_status: convertedData.episode_status,
+        episode_start_date_time: convertedData.episode_start_date_time,
+        episode_end_date_time: convertedData.episode_end_date_time
+      };
       
       const response = await api.put(`/api/episodes/${id}`, cleanData);
       return { success: true, data: response.data };
@@ -288,8 +344,8 @@ const calendarService = {
     }
   },
 
-  // Create new event with episodes (Admin only)
-  async createEvent(eventData) {
+  // Create new event with episodes (Admin only) with timezone support
+  async createEvent(eventData, facilityTimezone = null) {
     try {
       // Validate required fields
       if (!eventData.resource_id || !eventData.event_start_date_time || !eventData.event_end_date_time) {
@@ -299,9 +355,29 @@ const calendarService = {
         };
       }
       
+      // Convert times if facility timezone is provided
+      let convertedData = { ...eventData };
+      
+      if (facilityTimezone) {
+        convertedData.event_start_date_time = dateUtils.createFacilityDateTime(
+          eventData.event_date || eventData.event_start_date_time.split('T')[0],
+          eventData.start_time || eventData.event_start_date_time.split('T')[1].slice(0, 5),
+          facilityTimezone
+        );
+        convertedData.event_end_date_time = dateUtils.createFacilityDateTime(
+          eventData.event_date || eventData.event_end_date_time.split('T')[0],
+          eventData.end_time || eventData.event_end_date_time.split('T')[1].slice(0, 5),
+          facilityTimezone
+        );
+        
+        if (eventData.repeat_end_date) {
+          convertedData.repeat_end_date = eventData.repeat_end_date;
+        }
+      }
+      
       // Validate dates
-      const startDate = new Date(eventData.event_start_date_time);
-      const endDate = new Date(eventData.event_end_date_time);
+      const startDate = new Date(convertedData.event_start_date_time);
+      const endDate = new Date(convertedData.event_end_date_time);
       
       if (startDate >= endDate) {
         return { 
@@ -310,17 +386,17 @@ const calendarService = {
         };
       }
       
-      if (eventData.repeat_mode !== 'once' && eventData.repeat_end_date) {
-        const repeatEnd = new Date(eventData.repeat_end_date);
+      if (convertedData.repeat_mode !== 'once' && convertedData.repeat_end_date) {
+        const repeatEnd = new Date(convertedData.repeat_end_date);
         if (repeatEnd <= startDate) {
           return { 
             success: false, 
-            error: 'Repeat end date must be after start date' 
+            error: 'Repeat end date must be after the start date' 
           };
         }
       }
       
-      const response = await api.post('/api/events', eventData);
+      const response = await api.post('/api/events', convertedData);
       return { success: true, data: response.data };
     } catch (error) {
       console.error('Create event error:', error);
@@ -372,13 +448,13 @@ const calendarService = {
   // Helper function to format date for API
   formatDateForAPI(date) {
     if (!date) return null;
-    return date.toISOString();
+    return dateUtils.formatForAPI(date);
   },
 
-  // Helper function to get calendar date range
-  getCalendarDateRange(view, date) {
-    const start = new Date(date);
-    const end = new Date(date);
+  // Helper function to get calendar date range with timezone support
+  getCalendarDateRange(view, date, facilityTimezone = dateUtils.DEFAULT_TIMEZONE) {
+    const start = dateUtils.convertToFacilityTime(new Date(date), facilityTimezone);
+    const end = dateUtils.convertToFacilityTime(new Date(date), facilityTimezone);
 
     switch (view) {
       case 'month':
@@ -404,8 +480,8 @@ const calendarService = {
     }
 
     return {
-      start: this.formatDateForAPI(start),
-      end: this.formatDateForAPI(end)
+      start: dateUtils.convertToUTC(start, facilityTimezone).toISOString(),
+      end: dateUtils.convertToUTC(end, facilityTimezone).toISOString()
     };
   },
 
@@ -434,10 +510,11 @@ const calendarService = {
     if (!episode) return { allowed: false, reason: 'Episode not found' };
     
     const status = episode.extendedProps?.status || episode.status;
+    const facilityTimezone = episode.extendedProps?.facilityTimezone || dateUtils.DEFAULT_TIMEZONE;
     const startTime = new Date(episode.start);
     
-    // Cannot edit past events
-    if (startTime < new Date()) {
+    // Cannot edit past events (check in facility timezone)
+    if (dateUtils.isPast(startTime, facilityTimezone)) {
       return { allowed: false, reason: 'Cannot modify past ice time' };
     }
     
@@ -459,8 +536,8 @@ const calendarService = {
     return { allowed: true };
   },
 
-  // Validate episode data before submission
-  validateEpisodeData(data) {
+  // Validate episode data before submission with timezone support
+  validateEpisodeData(data, facilityTimezone = dateUtils.DEFAULT_TIMEZONE) {
     const errors = {};
     
     if (!data.episode_title?.trim()) {
@@ -472,15 +549,14 @@ const calendarService = {
     }
     
     if (data.episode_start_date_time && data.episode_end_date_time) {
-      const start = new Date(data.episode_start_date_time);
-      const end = new Date(data.episode_end_date_time);
+      const validation = dateUtils.validateDateRange(
+        data.episode_start_date_time, 
+        data.episode_end_date_time, 
+        facilityTimezone
+      );
       
-      if (start >= end) {
-        errors.date = 'End time must be after start time';
-      }
-      
-      if (start < new Date()) {
-        errors.date = 'Cannot create episodes in the past';
+      if (!validation.isValid) {
+        errors.date = validation.errors.join(', ');
       }
     }
     
@@ -504,30 +580,25 @@ const calendarService = {
     return true;
   },
 
-  // Smart snap to grid helper
-  snapToGrid(dateTime, snapDuration = 15) {
-    const date = new Date(dateTime);
-    const minutes = date.getMinutes();
-    const snappedMinutes = Math.round(minutes / snapDuration) * snapDuration;
-    
-    date.setMinutes(snappedMinutes);
-    date.setSeconds(0);
-    date.setMilliseconds(0);
-    
-    return date;
+  // Smart snap to grid helper with timezone support
+  snapToGrid(dateTime, snapDuration = 15, facilityTimezone = dateUtils.DEFAULT_TIMEZONE) {
+    return dateUtils.roundToInterval(dateTime, snapDuration, facilityTimezone);
   },
 
   // Check if time is within business hours
-  isWithinBusinessHours(startTime, endTime, facilitySchedule) {
+  isWithinBusinessHours(startTime, endTime, facilitySchedule, facilityTimezone = dateUtils.DEFAULT_TIMEZONE) {
     if (!facilitySchedule) return true;
     
-    const dayOfWeek = startTime.getDay();
+    const facilityStartTime = dateUtils.convertToFacilityTime(startTime, facilityTimezone);
+    const facilityEndTime = dateUtils.convertToFacilityTime(endTime, facilityTimezone);
+    
+    const dayOfWeek = facilityStartTime.getDay();
     const daySchedule = facilitySchedule[dayOfWeek];
     
     if (!daySchedule || daySchedule.isClosed) return false;
     
-    const startHour = startTime.getHours() + startTime.getMinutes() / 60;
-    const endHour = endTime.getHours() + endTime.getMinutes() / 60;
+    const startHour = facilityStartTime.getHours() + facilityStartTime.getMinutes() / 60;
+    const endHour = facilityEndTime.getHours() + facilityEndTime.getMinutes() / 60;
     
     return startHour >= daySchedule.openHour && endHour <= daySchedule.closeHour;
   },
@@ -540,22 +611,61 @@ const calendarService = {
       FACILITY_CLOSED: 'facility_closed',
       RESOURCE_UNAVAILABLE: 'resource_unavailable',
       DURATION_INVALID: 'duration_invalid',
-      PAST_DATE: 'past_date'
+      PAST_DATE: 'past_date',
+      TIMEZONE_BOUNDARY: 'timezone_boundary'
     };
   },
 
-  // Format conflict message
-  formatConflictMessage(conflict) {
+  // Format conflict message with timezone awareness
+  formatConflictMessage(conflict, facilityTimezone = dateUtils.DEFAULT_TIMEZONE) {
     const messages = {
       overlap: 'Time slot overlaps with existing ice time',
       business_hours: 'Time is outside facility business hours',
       facility_closed: 'Facility is closed at this time',
       resource_unavailable: 'Resource is not available',
       duration_invalid: 'Duration is too short or too long',
-      past_date: 'Cannot schedule in the past'
+      past_date: 'Cannot schedule in the past',
+      timezone_boundary: 'Time change crosses timezone boundary'
     };
     
-    return messages[conflict.type] || conflict.message || 'Schedule conflict detected';
+    let message = messages[conflict.type] || conflict.message || 'Schedule conflict detected';
+    
+    // Add timezone context if available
+    if (conflict.time && facilityTimezone) {
+      const timezoneDisplay = dateUtils.getTimezoneDisplayName(facilityTimezone);
+      message += ` (${timezoneDisplay})`;
+    }
+    
+    return message;
+  },
+
+  // Convert calendar event times for display in specific timezone
+  convertEventTimesForDisplay(event, targetTimezone) {
+    if (!event || !targetTimezone) return event;
+    
+    return {
+      ...event,
+      start: dateUtils.convertToFacilityTime(event.start, targetTimezone),
+      end: dateUtils.convertToFacilityTime(event.end, targetTimezone),
+      extendedProps: {
+        ...event.extendedProps,
+        displayStartTime: dateUtils.formatTimeOnly(event.start, targetTimezone),
+        displayEndTime: dateUtils.formatTimeOnly(event.end, targetTimezone),
+        displayDate: dateUtils.formatDateOnly(event.start, targetTimezone),
+        displayTimezone: targetTimezone
+      }
+    };
+  },
+
+  // Get timezone information for a facility
+  async getFacilityTimezone(facilityId) {
+    try {
+      const response = await api.get(`/api/facilities/${facilityId}`);
+      return response.data.facility?.facility_time_zone || dateUtils.DEFAULT_TIMEZONE;
+    } catch (error) {
+      console.error('Get facility timezone error:', error);
+      return dateUtils.DEFAULT_TIMEZONE;
+    }
   }
 };
 
