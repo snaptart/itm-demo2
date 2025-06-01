@@ -1,4 +1,4 @@
-const { Event, Episode, Resource, Facility } = require('../models');
+const { Event, Episode, Resource, Facility, Booking } = require('../models');
 const { Op } = require('sequelize');
 
 const eventController = {
@@ -11,7 +11,10 @@ const eventController = {
         event_end_date_time,
         episode_duration,
         repeat_mode,
-        generate_episodes
+        repeat_end_date,
+        repeat_days,
+        generate_episodes,
+        episode_data
       } = req.body;
 
       // Validate required fields
@@ -39,28 +42,48 @@ const eventController = {
         });
       }
 
-      // Create event
-      const event = await Event.create({
-        resource_id,
-        event_start_date_time: new Date(event_start_date_time),
-        event_end_date_time: new Date(event_end_date_time),
-        event_start_date: new Date(event_start_date_time).toISOString().split('T')[0],
-        event_end_date: new Date(event_end_date_time).toISOString().split('T')[0],
-        event_start_time: new Date(event_start_date_time).toTimeString().split(' ')[0],
-        event_end_time: new Date(event_end_date_time).toTimeString().split(' ')[0],
-        episode_duration: episode_duration || 60,
-        repeat_mode: repeat_mode || 'once',
-        created_by: req.user.username,
-        updated_by: req.user.username
-      });
-
-      // Generate episodes if requested
-      if (generate_episodes) {
-        await this.generateEpisodesForEvent(event, resource, req.user);
+      const createdEvents = [];
+      
+      if (repeat_mode === 'once') {
+        // Create single event
+        const event = await createSingleEvent({
+          resource_id,
+          event_start_date_time,
+          event_end_date_time,
+          episode_duration: episode_duration || 60,
+          created_by: req.user.username
+        });
+        
+        createdEvents.push(event);
+        
+        if (generate_episodes) {
+          await generateEpisodesForEvent(event, resource, req.user, episode_data);
+        }
+      } else {
+        // Create recurring events
+        const recurringEvents = await createRecurringEvents({
+          resource_id,
+          event_start_date_time,
+          event_end_date_time,
+          episode_duration: episode_duration || 60,
+          repeat_mode,
+          repeat_end_date,
+          repeat_days,
+          created_by: req.user.username
+        });
+        
+        createdEvents.push(...recurringEvents);
+        
+        if (generate_episodes) {
+          for (const event of recurringEvents) {
+            await generateEpisodesForEvent(event, resource, req.user, episode_data);
+          }
+        }
       }
 
-      // Reload with associations
-      const newEvent = await Event.findByPk(event.event_id, {
+      // Reload events with associations
+      const newEvents = await Event.findAll({
+        where: { event_id: { [Op.in]: createdEvents.map(e => e.event_id) } },
         include: [
           {
             model: Resource,
@@ -78,50 +101,14 @@ const eventController = {
       });
 
       res.status(201).json({
-        message: 'Event created successfully',
-        event: newEvent
+        message: `${newEvents.length} event(s) created successfully`,
+        events: newEvents
       });
 
     } catch (error) {
       console.error('Create event error:', error);
       res.status(500).json({ message: 'Error creating event' });
     }
-  },
-
-  // Generate episodes for an event
-  async generateEpisodesForEvent(event, resource, user) {
-    const startTime = new Date(event.event_start_date_time);
-    const endTime = new Date(event.event_end_date_time);
-    const duration = event.episode_duration || 60; // in minutes
-
-    const episodes = [];
-    let currentStart = new Date(startTime);
-
-    while (currentStart < endTime) {
-      const currentEnd = new Date(currentStart.getTime() + duration * 60000);
-      
-      if (currentEnd > endTime) break;
-
-      episodes.push({
-        event_id: event.event_id,
-        episode_start_date_time: new Date(currentStart),
-        episode_end_date_time: new Date(currentEnd),
-        episode_duration: duration,
-        episode_title: `Ice Time - ${resource.resource_name}`,
-        episode_status: 'available',
-        episode_price: resource.facility.base_price || 150.00,
-        created_by: user.username,
-        updated_by: user.username
-      });
-
-      currentStart = new Date(currentEnd);
-    }
-
-    if (episodes.length > 0) {
-      await Episode.bulkCreate(episodes);
-    }
-
-    return episodes.length;
   },
 
   // Get events for a resource
@@ -232,5 +219,142 @@ const eventController = {
     }
   }
 };
+
+// Helper function to create a single event
+async function createSingleEvent(eventData) {
+  const {
+    resource_id,
+    event_start_date_time,
+    event_end_date_time,
+    episode_duration,
+    created_by
+  } = eventData;
+
+  return await Event.create({
+    resource_id,
+    event_start_date_time: new Date(event_start_date_time),
+    event_end_date_time: new Date(event_end_date_time),
+    event_start_date: new Date(event_start_date_time).toISOString().split('T')[0],
+    event_end_date: new Date(event_end_date_time).toISOString().split('T')[0],
+    event_start_time: new Date(event_start_date_time).toTimeString().split(' ')[0],
+    event_end_time: new Date(event_end_date_time).toTimeString().split(' ')[0],
+    episode_duration,
+    repeat_mode: 'once',
+    created_by,
+    updated_by: created_by
+  });
+}
+
+// Helper function to create recurring events
+async function createRecurringEvents(eventData) {
+  const {
+    resource_id,
+    event_start_date_time,
+    event_end_date_time,
+    episode_duration,
+    repeat_mode,
+    repeat_end_date,
+    repeat_days,
+    created_by
+  } = eventData;
+
+  const events = [];
+  const startDate = new Date(event_start_date_time);
+  const endDate = new Date(event_end_date_time);
+  const repeatEndDate = new Date(repeat_end_date);
+  repeatEndDate.setHours(23, 59, 59, 999);
+  
+  const timeDiff = endDate.getTime() - startDate.getTime();
+  
+  let currentDate = new Date(startDate);
+  
+  while (currentDate <= repeatEndDate) {
+    let shouldCreate = false;
+    
+    switch (repeat_mode) {
+      case 'daily':
+        shouldCreate = true;
+        break;
+        
+      case 'weekly':
+        if (repeat_days && repeat_days.includes(currentDate.getDay())) {
+          shouldCreate = true;
+        }
+        break;
+        
+      case 'biweekly':
+        if (repeat_days && repeat_days.includes(currentDate.getDay())) {
+          const weeksDiff = Math.floor((currentDate - startDate) / (7 * 24 * 60 * 60 * 1000));
+          if (weeksDiff % 2 === 0) {
+            shouldCreate = true;
+          }
+        }
+        break;
+    }
+    
+    if (shouldCreate) {
+      const eventStart = new Date(currentDate);
+      const eventEnd = new Date(currentDate.getTime() + timeDiff);
+      
+      const event = await Event.create({
+        resource_id,
+        event_start_date_time: eventStart,
+        event_end_date_time: eventEnd,
+        event_start_date: eventStart.toISOString().split('T')[0],
+        event_end_date: eventEnd.toISOString().split('T')[0],
+        event_start_time: eventStart.toTimeString().split(' ')[0],
+        event_end_time: eventEnd.toTimeString().split(' ')[0],
+        episode_duration,
+        repeat_mode,
+        created_by,
+        updated_by: created_by
+      });
+      
+      events.push(event);
+    }
+    
+    // Move to next day
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  
+  return events;
+}
+
+// Helper function to generate episodes for an event
+async function generateEpisodesForEvent(event, resource, user, episodeData = {}) {
+  const startTime = new Date(event.event_start_date_time);
+  const endTime = new Date(event.event_end_date_time);
+  const duration = event.episode_duration || 60; // in minutes
+
+  const episodes = [];
+  let currentStart = new Date(startTime);
+
+  while (currentStart < endTime) {
+    const currentEnd = new Date(currentStart.getTime() + duration * 60000);
+    
+    if (currentEnd > endTime) break;
+
+    episodes.push({
+      event_id: event.event_id,
+      episode_start_date_time: new Date(currentStart),
+      episode_end_date_time: new Date(currentEnd),
+      episode_duration: duration,
+      episode_title: episodeData.episode_title || `Ice Time - ${resource.resource_name}`,
+      episode_description: episodeData.episode_description || '',
+      episode_status: 'available',
+      episode_price: episodeData.episode_price || 150.00,
+      created_by: user.username,
+      updated_by: user.username
+    });
+
+    currentStart = new Date(currentEnd);
+  }
+
+  if (episodes.length > 0) {
+    await Episode.bulkCreate(episodes);
+  }
+
+  return episodes.length;
+}
 
 module.exports = eventController;

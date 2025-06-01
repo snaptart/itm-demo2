@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import CalendarView from '../components/calendar/CalendarView/CalendarView';
 import CalendarSidebar from '../components/calendar/CalendarSidebar/CalendarSidebar';
 import EventModal from '../components/calendar/EventModal/EventModal';
+import CreateEventModal from '../components/calendar/CreateEventModal/CreateEventModal';
 import LoadingSpinner from '../components/common/LoadingSpinner/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage/ErrorMessage';
 import calendarService from '../services/calendarService';
 import facilityService from '../services/facilityService';
+import resourceService from '../services/resourceService';
 import authService from '../services/authService';
 import './CalendarPage.css';
 
@@ -20,11 +21,12 @@ function CalendarPage() {
   const [selectedResources, setSelectedResources] = useState([]);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [showEventModal, setShowEventModal] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [selectedDateForCreate, setSelectedDateForCreate] = useState(null);
   const [calendarView, setCalendarView] = useState('month');
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   
-  const navigate = useNavigate();
   const currentUser = authService.getCurrentUser();
   const isAdmin = currentUser?.user_type === 'admin';
 
@@ -162,12 +164,29 @@ function CalendarPage() {
   };
 
   const handleCreateEvent = () => {
-    navigate('/calendar/create-event', { 
-      state: { 
-        facilityId: selectedFacility?.facility_id,
-        resourceId: selectedResources[0] 
-      } 
-    });
+    setSelectedDateForCreate(calendarDate);
+    setShowCreateModal(true);
+  };
+
+  const handleCreateModalClose = () => {
+    setShowCreateModal(false);
+    setSelectedDateForCreate(null);
+  };
+
+  const handleCreateSuccess = async () => {
+    await loadCalendarEvents();
+    setShowCreateModal(false);
+    setSelectedDateForCreate(null);
+  };
+
+  const handleDateClick = (arg) => {
+    setSelectedDateForCreate(arg.date);
+    setShowCreateModal(true);
+  };
+
+  const handleDateSelect = (selectInfo) => {
+    setSelectedDateForCreate(selectInfo.start);
+    setShowCreateModal(true);
   };
 
   const handleViewChange = useCallback((view) => {
@@ -220,6 +239,8 @@ function CalendarPage() {
               onViewChange={handleViewChange}
               onDateChange={handleDateChange}
               onEventClick={handleEventClick}
+              onDateClick={handleDateClick}
+              onDateSelect={handleDateSelect}
               isAdmin={isAdmin}
             />
           ) : (
@@ -236,6 +257,20 @@ function CalendarPage() {
           isAdmin={isAdmin}
           onClose={handleEventModalClose}
           onUpdate={handleEventUpdate}
+          calendarService={calendarService}
+        />
+      )}
+
+      {showCreateModal && selectedFacility && (
+        <CreateEventModal
+          isOpen={showCreateModal}
+          onClose={handleCreateModalClose}
+          onSuccess={handleCreateSuccess}
+          selectedDate={selectedDateForCreate}
+          selectedResource={selectedResources[0]}
+          facility={selectedFacility}
+          calendarService={calendarService}
+          resourceService={resourceService}
         />
       )}
     </div>

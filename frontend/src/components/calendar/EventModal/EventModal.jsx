@@ -1,11 +1,16 @@
 import React, { useState } from 'react';
-import calendarService from '../../../services/calendarService';
 import './EventModal.css';
 
-function EventModal({ event, isAdmin, onClose, onUpdate }) {
+function EventModal({ event, isAdmin, onClose, onUpdate, calendarService }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [isEditing, setIsEditing] = useState(false);
+  
+  // Safety check for event object
+  if (!event) {
+    return null;
+  }
+  
   const [editData, setEditData] = useState({
     episode_title: event.episode_title || '',
     episode_description: event.episode_description || '',
@@ -40,6 +45,11 @@ function EventModal({ event, isAdmin, onClose, onUpdate }) {
   };
 
   const handleSave = async () => {
+    if (!calendarService) {
+      setError('Calendar service not available');
+      return;
+    }
+
     try {
       setLoading(true);
       setError('');
@@ -61,6 +71,11 @@ function EventModal({ event, isAdmin, onClose, onUpdate }) {
 
   const handleDelete = async () => {
     if (!window.confirm('Are you sure you want to delete this ice time slot?')) {
+      return;
+    }
+
+    if (!calendarService) {
+      setError('Calendar service not available');
       return;
     }
 
