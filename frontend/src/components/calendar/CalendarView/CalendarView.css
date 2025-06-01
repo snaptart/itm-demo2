@@ -1,0 +1,260 @@
+.calendar-view-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+}
+
+/* FullCalendar customization */
+.fc {
+  flex: 1;
+}
+
+.fc-theme-standard .fc-scrollgrid {
+  border: 1px solid #e0e0e0;
+}
+
+.fc-theme-standard td,
+.fc-theme-standard th {
+  border-color: #e0e0e0;
+}
+
+.fc-toolbar {
+  margin-bottom: 20px;
+}
+
+.fc-toolbar-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.fc-button-primary {
+  background-color: #4299e1;
+  border-color: #4299e1;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 6px 12px;
+}
+
+.fc-button-primary:hover:not(:disabled) {
+  background-color: #3182ce;
+  border-color: #3182ce;
+}
+
+.fc-button-primary:disabled {
+  background-color: #e2e8f0;
+  border-color: #e2e8f0;
+  color: #a0aec0;
+}
+
+.fc-button-active {
+  background-color: #2d3748 !important;
+  border-color: #2d3748 !important;
+}
+
+/* Custom event styling */
+.fc-event-custom {
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.fc-event-time {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.fc-event-title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-event-details {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  margin-top: 2px;
+  opacity: 0.8;
+}
+
+.fc-event-resource {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+.fc-event-price {
+  font-weight: 600;
+}
+
+.fc-event-status-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+/* Status-specific colors */
+.fc-event.available {
+  background-color: #FFFFFF !important;
+  color: #1a202c !important;
+  border-color: #cbd5e0 !important;
+}
+
+.fc-event.assigned {
+  background-color: #FFEB3B !important;
+  color: #1a202c !important;
+  border-color: #F9A825 !important;
+}
+
+.fc-event.pending {
+  background-color: #FFEB3B !important;
+  color: #1a202c !important;
+  border-color: #F9A825 !important;
+}
+
+.fc-event.booked {
+  background-color: #4CAF50 !important;
+  color: white !important;
+  border-color: #388E3C !important;
+}
+
+.fc-event.maintenance,
+.fc-event.cancelled {
+  background-color: #9E9E9E !important;
+  color: white !important;
+  border-color: #616161 !important;
+}
+
+/* Admin view - Assigned Reserved (Blue) */
+.fc-event.assigned-reserved {
+  background-color: #2196F3 !important;
+  color: white !important;
+  border-color: #1976D2 !important;
+}
+
+/* List view customization */
+.fc-list-event-title {
+  font-weight: 500;
+}
+
+.fc-list-event-time {
+  color: #4a5568;
+}
+
+/* Day/Week grid customization */
+.fc-timegrid-slot-label {
+  font-size: 12px;
+  color: #718096;
+}
+
+.fc-col-header-cell-cushion {
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.fc-daygrid-day-number {
+  font-weight: 500;
+  color: #2d3748;
+}
+
+.fc-day-today {
+  background-color: #f0f9ff !important;
+}
+
+/* Legend */
+.calendar-legend {
+  margin-top: 20px;
+  padding: 16px;
+  background: #f7fafc;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+
+.calendar-legend h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #4a5568;
+}
+
+.legend-color {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.legend-color.available {
+  background-color: #FFFFFF;
+  border-color: #cbd5e0;
+}
+
+.legend-color.assigned-pending {
+  background-color: #FFEB3B;
+}
+
+.legend-color.assigned-reserved {
+  background-color: #2196F3;
+}
+
+.legend-color.booked {
+  background-color: #4CAF50;
+}
+
+.legend-color.maintenance {
+  background-color: #9E9E9E;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .calendar-view-container {
+    padding: 12px;
+  }
+  
+  .fc-toolbar {
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .fc-toolbar-chunk {
+    display: flex;
+    justify-content: center;
+  }
+  
+  .fc-event-custom {
+    font-size: 11px;
+  }
+  
+  .fc-event-details {
+    display: none;
+  }
+  
+  .legend-items {
+    flex-direction: column;
+    gap: 8px;
+  }
+}

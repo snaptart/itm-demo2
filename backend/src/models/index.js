@@ -5,12 +5,12 @@ const Resource = require('./Resource');
 const ResourceType = require('./ResourceType');
 const FacilityHours = require('./FacilityHours');
 const FacilityPricing = require('./FacilityPricing');
+const Event = require('./Event');
+const Episode = require('./Episode');
+const Program = require('./Program');
+const ProgramType = require('./ProgramType');
+const Booking = require('./Booking');
 // Future models to be imported
-// const Event = require('./Event');
-// const Episode = require('./Episode');
-// const Program = require('./Program');
-// const ProgramType = require('./ProgramType');
-// const Booking = require('./Booking');
 // const Notification = require('./Notification');
 // const AuditLog = require('./AuditLog');
 
@@ -22,7 +22,12 @@ const models = {
   Resource,
   ResourceType,
   FacilityHours,
-  FacilityPricing
+  FacilityPricing,
+  Event,
+  Episode,
+  Program,
+  ProgramType,
+  Booking
 };
 
 // Define associations

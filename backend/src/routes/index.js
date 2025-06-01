@@ -5,9 +5,10 @@ const router = express.Router();
 const authRoutes = require('./auth');
 const facilityRoutes = require('./facilities');
 const resourceRoutes = require('./resources');
+const episodeRoutes = require('./episodes');
+const eventRoutes = require('./events');
 // Future routes to be added
 // const userRoutes = require('./users');
-// const episodeRoutes = require('./episodes');
 // const bookingRoutes = require('./bookings');
 // const programRoutes = require('./programs');
 // const notificationRoutes = require('./notifications');
@@ -16,9 +17,10 @@ const resourceRoutes = require('./resources');
 router.use('/auth', authRoutes);
 router.use('/facilities', facilityRoutes);
 router.use('/resources', resourceRoutes);
+router.use('/episodes', episodeRoutes);
+router.use('/events', eventRoutes);
 // Future routes
 // router.use('/users', userRoutes);
-// router.use('/episodes', episodeRoutes);
 // router.use('/bookings', bookingRoutes);
 // router.use('/programs', programRoutes);
 // router.use('/notifications', notificationRoutes);
