@@ -1,4 +1,4 @@
-// frontend/src/utils/dateUtils.js (Enhanced with Timezone Support)
+// frontend/src/utils/dateUtils.js (Enhanced with Missing Month Methods)
 
 export const dateUtils = {
   // Default facility timezone (can be overridden per facility)
@@ -273,6 +273,36 @@ export const dateUtils = {
     const day = facilityTime.getDay();
     facilityTime.setDate(facilityTime.getDate() + (6 - day));
     return this.getEndOfDay(facilityTime, facilityTimezone);
+  },
+
+  // NEWLY ADDED: Get start/end of month in facility timezone
+  getStartOfMonth(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return null;
+    
+    try {
+      const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
+      facilityTime.setDate(1); // First day of month
+      facilityTime.setHours(0, 0, 0, 0);
+      return this.convertToUTC(facilityTime, facilityTimezone);
+    } catch (error) {
+      console.error('Get start of month failed:', error);
+      return null;
+    }
+  },
+
+  getEndOfMonth(date, facilityTimezone = this.DEFAULT_TIMEZONE) {
+    if (!date) return null;
+    
+    try {
+      const facilityTime = this.convertToFacilityTime(new Date(date), facilityTimezone);
+      facilityTime.setMonth(facilityTime.getMonth() + 1); // Next month
+      facilityTime.setDate(0); // Last day of previous month (current month)
+      facilityTime.setHours(23, 59, 59, 999);
+      return this.convertToUTC(facilityTime, facilityTimezone);
+    } catch (error) {
+      console.error('Get end of month failed:', error);
+      return null;
+    }
   },
 
   // Validate date range in facility timezone
