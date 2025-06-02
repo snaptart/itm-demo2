@@ -1,6 +1,8 @@
+// frontend/src/components/calendar/EventModal/EventModal.jsx (Fixed UTC Handling)
 import React, { useState, useEffect } from 'react';
 import ConfirmationModal from '../../common/ConfirmationModal/ConfirmationModal';
 import LoadingSpinner from '../../common/LoadingSpinner/LoadingSpinner';
+import { dateUtils } from '../../../utils/dateUtils';
 import './EventModal.css';
 
 function EventModal({ 
@@ -69,10 +71,13 @@ function EventModal({
     }
   };
 
-  const formatDateTime = (dateString) => {
+  // Format datetime with timezone conversion
+  const formatDateTime = (dateString, timezone) => {
     if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleString('en-US', {
+    
+    // The backend returns UTC times, convert to facility timezone for display
+    const utcDate = new Date(dateString);
+    return dateUtils.formatForDisplay(utcDate, timezone, {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
@@ -358,9 +363,9 @@ function EventModal({
                     <div className="detail-row">
                       <span className="detail-label">Time:</span>
                       <span className="detail-value">
-                        {formatDateTime(episodeDetails.episode_start_date_time)}
+                        {formatDateTime(episodeDetails.episode_start_date_time, episodeDetails.facilityTimezone)}
                         <br />
-                        to {formatDateTime(episodeDetails.episode_end_date_time)}
+                        to {formatDateTime(episodeDetails.episode_end_date_time, episodeDetails.facilityTimezone)}
                       </span>
                     </div>
 

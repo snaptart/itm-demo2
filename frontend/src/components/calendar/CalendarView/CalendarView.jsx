@@ -1,4 +1,4 @@
-// frontend/src/components/calendar/CalendarView/CalendarView.jsx - Fixed event handling
+// frontend/src/components/calendar/CalendarView/CalendarView.jsx - Fixed UTC Handling
 import React, { useRef, useEffect } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -89,9 +89,9 @@ function CalendarView({
       return;
     }
 
-    // Calculate new start and end times
-    const newStart = new Date(event.start);
-    const newEnd = new Date(event.end);
+    // Get new times from the event (these are already in facility timezone from CalendarService)
+    const newStart = event.start;
+    const newEnd = event.end;
     
     // Check if dropping to a past date
     if (newStart < new Date()) {
@@ -106,6 +106,7 @@ function CalendarView({
       episodeId,
       newStartTime: newStart.toISOString(),
       newEndTime: newEnd.toISOString(),
+      facilityTimezone: event.extendedProps.facilityTimezone,
       delta: {
         days: Math.round(delta.days || 0),
         milliseconds: delta.milliseconds || 0
@@ -136,8 +137,8 @@ function CalendarView({
       return;
     }
 
-    // Calculate new duration
-    const newEnd = new Date(event.end);
+    // Get new end time (already in facility timezone)
+    const newEnd = event.end;
     const duration = Math.round((newEnd - event.start) / (1000 * 60)); // in minutes
     
     // Validate minimum duration (30 minutes)
@@ -158,6 +159,7 @@ function CalendarView({
     const resizeData = {
       episodeId,
       newEndTime: newEnd.toISOString(),
+      facilityTimezone: event.extendedProps.facilityTimezone,
       newDuration: duration,
       endDelta: {
         days: Math.round(endDelta.days || 0),
@@ -276,30 +278,19 @@ function CalendarView({
     }
   };
 
-  // FIXED: Process events to ensure proper date handling
-  // The backend already converts times to facility timezone, so we just need to ensure
-  // FullCalendar gets proper Date objects
+  // Process events to ensure proper handling
+  // Events from CalendarService are already converted to facility timezone
   const processedEvents = events.map(event => {
-    // Trust the backend times - they're already in facility timezone
+    // Ensure dates are Date objects for FullCalendar
     const processedEvent = {
       ...event,
-      // Ensure start and end are Date objects for FullCalendar
-      start: typeof event.start === 'string' ? new Date(event.start) : event.start,
-      end: typeof event.end === 'string' ? new Date(event.end) : event.end,
+      start: event.start instanceof Date ? event.start : new Date(event.start),
+      end: event.end instanceof Date ? event.end : new Date(event.end),
       // Set editability based on business rules
       editable: isEventEditable(event),
       startEditable: isEventEditable(event),
       durationEditable: isEventEditable(event) && view !== 'dayGridMonth'
     };
-
-    // Debug logging to verify times
-    if (event.extendedProps?.debug) {
-      console.log(`Event ${event.id} display times:`, {
-        original: event.start,
-        processed: processedEvent.start,
-        timezone: event.extendedProps.facilityTimezone
-      });
-    }
 
     return processedEvent;
   });
@@ -343,8 +334,8 @@ function CalendarView({
         eventDisplay="block"
         dayMaxEvents={true}
         moreLinkClick="popover"
-        // IMPORTANT: Let FullCalendar handle the timezone display
-        // The times from backend are already in facility timezone
+        // IMPORTANT: Use 'local' to display times as-is
+        // The times are already converted to facility timezone by CalendarService
         timeZone="local"
         eventTimeFormat={{
           hour: 'numeric',
