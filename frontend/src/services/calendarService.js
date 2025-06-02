@@ -1,4 +1,4 @@
-// frontend/src/services/calendarService.js (Fixed with Simplified Event Creation)
+// frontend/src/services/calendarService.js (FIXED - Trust Backend Times)
 import api from './api';
 import { dateUtils } from '../utils/dateUtils';
 
@@ -45,7 +45,7 @@ const retryOperation = async (operation, retries = MAX_RETRIES) => {
 };
 
 const calendarService = {
-  // Get episodes for calendar view
+  // Get episodes for calendar view - FIXED to trust backend times
   async getEpisodes(params = {}, options = {}) {
     try {
       // Get facility timezone if facility_id is provided
@@ -59,18 +59,30 @@ const calendarService = {
           ...params,
           timezone: facilityTimezone
         },
-        signal: options.signal,
-        headers: {
-          'X-Client-Timezone': options.clientTimezone || dateUtils.DEFAULT_TIMEZONE,
-          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
-        }
+        signal: options.signal
       });
       
       const response = await retryOperation(operation);
       
-      // Process events for timezone display
+      // FIXED: Trust the backend to provide correctly formatted times
+      // The backend now returns times already converted to facility timezone
       const processedEvents = response.data.events?.map(event => {
-        return this.enhanceEventWithTimezone(event, facilityTimezone);
+        // Add debug logging to verify times
+        if (event.extendedProps?.debug) {
+          console.log(`Event ${event.id} times:`, {
+            display: event.start,
+            utc: event.extendedProps.debug.utcStart,
+            timezone: event.extendedProps.facilityTimezone
+          });
+        }
+        
+        // Return the event as-is, trusting backend conversion
+        return {
+          ...event,
+          // Ensure FullCalendar gets Date objects
+          start: new Date(event.start),
+          end: new Date(event.end)
+        };
       }) || [];
 
       return { 
@@ -95,31 +107,6 @@ const calendarService = {
     }
   },
 
-  // Enhance event with timezone information
-  enhanceEventWithTimezone(event, facilityTimezone) {
-    if (!event || !facilityTimezone) return event;
-
-    try {
-      return {
-        ...event,
-        extendedProps: {
-          ...event.extendedProps,
-          facilityTimezone,
-          displayStartTime: dateUtils.formatTimeOnly(event.start, facilityTimezone),
-          displayEndTime: dateUtils.formatTimeOnly(event.end, facilityTimezone),
-          displayDate: dateUtils.formatDateOnly(event.start, facilityTimezone),
-          displayDuration: dateUtils.formatDuration(
-            dateUtils.getDuration(event.start, event.end)
-          ),
-          timezoneDisplay: dateUtils.getTimezoneDisplayName(facilityTimezone)
-        }
-      };
-    } catch (error) {
-      console.error('Enhance event with timezone failed:', error);
-      return event;
-    }
-  },
-
   // Get calendar resources (facilities and rinks)
   async getCalendarResources(params = {}) {
     try {
@@ -139,16 +126,18 @@ const calendarService = {
     }
   },
 
-  // Get single episode details
+  // Get single episode details - FIXED to trust backend times
   async getEpisodeById(id, timezone = null) {
     try {
       const operation = () => api.get(`/api/episodes/${id}`, { 
-        params: { timezone },
-        headers: {
-          'X-Client-Timezone': timezone || dateUtils.DEFAULT_TIMEZONE
-        }
+        params: { timezone }
       });
       const response = await retryOperation(operation);
+
+      // Debug logging
+      if (response.data.episode?.debug) {
+        console.log(`Episode ${id} times from backend:`, response.data.episode.debug);
+      }
 
       return { success: true, data: response.data };
     } catch (error) {
@@ -160,7 +149,7 @@ const calendarService = {
     }
   },
 
-  // FIXED: Create new event with simplified timezone handling
+  // Create new event - Send facility times to backend
   async createEvent(eventData, facilityTimezone = null) {
     try {
       console.log('Calendar Service - Creating event with data:', eventData);
@@ -173,43 +162,15 @@ const calendarService = {
         };
       }
       
-      // SIMPLIFIED: Use the datetime objects as provided by the form
+      // The datetime strings should already be in facility timezone from the form
       const convertedData = {
         ...eventData,
-        // The datetime strings are already in the correct format from dateUtils.formatForAPI()
-        event_start_date_time: eventData.event_start_date_time,
-        event_end_date_time: eventData.event_end_date_time,
         facility_timezone: facilityTimezone || dateUtils.DEFAULT_TIMEZONE
       };
       
-      console.log('Calendar Service - Converted data for API:', convertedData);
+      console.log('Calendar Service - Sending to API:', convertedData);
       
-      // Validate dates
-      const startDate = new Date(convertedData.event_start_date_time);
-      const endDate = new Date(convertedData.event_end_date_time);
-      
-      if (startDate >= endDate) {
-        return { 
-          success: false, 
-          error: 'End time must be after start time' 
-        };
-      }
-      
-      if (convertedData.repeat_mode !== 'once' && convertedData.repeat_end_date) {
-        const repeatEnd = new Date(convertedData.repeat_end_date + 'T23:59:59');
-        if (repeatEnd <= startDate) {
-          return { 
-            success: false, 
-            error: 'Repeat end date must be after the start date' 
-          };
-        }
-      }
-      
-      const response = await api.post('/api/events', convertedData, {
-        headers: {
-          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
-        }
-      });
+      const response = await api.post('/api/events', convertedData);
       return { success: true, data: response.data };
     } catch (error) {
       console.error('Create event error:', error);
@@ -220,24 +181,13 @@ const calendarService = {
     }
   },
 
-  // Move episode with drag and drop
+  // Move episode - Send facility times to backend
   async moveEpisode(episodeId, newStartTime, newEndTime, facilityTimezone = null) {
     try {
-      // SIMPLIFIED: Use the provided times directly
-      const convertedStartTime = newStartTime;
-      const convertedEndTime = newEndTime;
-
-      // Calculate duration
-      const duration = Math.round((new Date(convertedEndTime) - new Date(convertedStartTime)) / (1000 * 60));
-
+      // The times coming from the calendar are already in facility timezone
       const response = await api.put(`/api/episodes/${episodeId}/move`, {
-        new_start_time: convertedStartTime,
-        new_end_time: convertedEndTime,
-        new_duration: duration
-      }, {
-        headers: {
-          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
-        }
+        new_start_time: newStartTime,
+        new_end_time: newEndTime
       });
       
       return { success: true, data: response.data };
@@ -250,15 +200,11 @@ const calendarService = {
     }
   },
 
-  // Resize episode
+  // Resize episode - Send facility times to backend
   async resizeEpisode(episodeId, newEndTime, facilityTimezone = null) {
     try {
       const response = await api.put(`/api/episodes/${episodeId}/resize`, {
         new_end_time: newEndTime
-      }, {
-        headers: {
-          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
-        }
       });
       
       return { success: true, data: response.data };
@@ -279,10 +225,6 @@ const calendarService = {
         new_start_time: newStartTime,
         new_end_time: newEndTime,
         facility_id: facilityId
-      }, {
-        headers: {
-          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
-        }
       });
       
       return { 
@@ -315,11 +257,7 @@ const calendarService = {
         episode_status: episodeData.episode_status
       };
       
-      const response = await api.put(`/api/episodes/${id}`, cleanData, {
-        headers: {
-          'X-Facility-Timezone': facilityTimezone || dateUtils.DEFAULT_TIMEZONE
-        }
-      });
+      const response = await api.put(`/api/episodes/${id}`, cleanData);
       return { success: true, data: response.data };
     } catch (error) {
       console.error('Update episode error:', error);
