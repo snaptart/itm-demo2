@@ -72,22 +72,36 @@ const eventController = {
 
       console.log(`Using facility timezone: ${actualFacilityTimezone}`);
 
-      // FIXED: Convert facility times to UTC for storage
-      let utcStartDateTime, utcEndDateTime;
-      try {
-        utcStartDateTime = TimezoneUtils.parseAndConvertToUTC(event_start_date_time, actualFacilityTimezone);
-        utcEndDateTime = TimezoneUtils.parseAndConvertToUTC(event_end_date_time, actualFacilityTimezone);
-        
-        console.log(`Event time conversion:`);
-        console.log(`  Facility start: ${event_start_date_time} -> UTC: ${utcStartDateTime.toISOString()}`);
-        console.log(`  Facility end: ${event_end_date_time} -> UTC: ${utcEndDateTime.toISOString()}`);
-      } catch (conversionError) {
-        console.error('Timezone conversion failed during event creation:', conversionError);
-        return res.status(400).json({ 
-          message: 'Failed to convert event times to facility timezone' 
-        });
-      }
-
+		// FIXED: Convert facility times to UTC for storage
+		let utcStartDateTime, utcEndDateTime;
+		try {
+		  // Check if times are already in ISO/UTC format
+		  const startStr = event_start_date_time.toString();
+		  const endStr = event_end_date_time.toString();
+		  
+		  // If already in ISO format with Z suffix, use as-is
+		  if (startStr.includes('Z') || endStr.includes('Z')) {
+			utcStartDateTime = new Date(event_start_date_time);
+			utcEndDateTime = new Date(event_end_date_time);
+			console.log('Times already in UTC format, using as-is');
+		  } else {
+			// Otherwise treat as facility local time (this shouldn't happen with current frontend)
+			utcStartDateTime = TimezoneUtils.parseAndConvertToUTC(event_start_date_time, actualFacilityTimezone);
+			utcEndDateTime = TimezoneUtils.parseAndConvertToUTC(event_end_date_time, actualFacilityTimezone);
+		  }
+		  
+		  console.log(`Event time conversion:`);
+		  console.log(`  Input start: ${event_start_date_time}`);
+		  console.log(`  Input end: ${event_end_date_time}`);
+		  console.log(`  Stored UTC start: ${utcStartDateTime.toISOString()}`);
+		  console.log(`  Stored UTC end: ${utcEndDateTime.toISOString()}`);
+		} catch (conversionError) {
+		  console.error('Timezone conversion failed during event creation:', conversionError);
+		  return res.status(400).json({ 
+			message: 'Failed to convert event times to facility timezone' 
+		  });
+		}
+		
       // Validate converted times
       if (isNaN(utcStartDateTime.getTime()) || isNaN(utcEndDateTime.getTime())) {
         return res.status(400).json({ 

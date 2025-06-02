@@ -31,17 +31,24 @@ class TimezoneUtils {
     }
   }
 
-  // Parse datetime string and convert to UTC for database storage
-  static parseAndConvertToUTC(dateTimeString, facilityTimezone = this.DEFAULT_TIMEZONE) {
-    if (!dateTimeString) return null;
-    
-    try {
-      return new Date(dateTimeString);
-    } catch (error) {
-      console.error('Parse and convert to UTC failed:', error);
-      return null;
-    }
-  }
+	// Parse datetime string and convert to UTC for database storage
+	static parseAndConvertToUTC(dateTimeString, facilityTimezone = this.DEFAULT_TIMEZONE) {
+	  if (!dateTimeString) return null;
+	  
+	  try {
+		// If the string already has 'Z' or timezone offset, it's already UTC
+		if (dateTimeString.includes('Z') || dateTimeString.match(/[+-]\d{2}:\d{2}$/)) {
+		  return new Date(dateTimeString);
+		}
+		
+		// Otherwise, treat it as a facility local time and keep as-is
+		// The controller will handle the offset calculation
+		return new Date(dateTimeString);
+	  } catch (error) {
+		console.error('Parse and convert to UTC failed:', error);
+		return null;
+	  }
+	}
 
   // Format datetime for display in facility timezone
   static formatForDisplay(utcDateTime, facilityTimezone = this.DEFAULT_TIMEZONE, format = 'en-US') {

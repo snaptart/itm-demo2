@@ -1,4 +1,4 @@
-// frontend/src/components/calendar/CalendarView/CalendarView.jsx (Fixed drag-drop data passing)
+// frontend/src/components/calendar/CalendarView/CalendarView.jsx - Fixed event handling
 import React, { useRef, useEffect } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -276,13 +276,33 @@ function CalendarView({
     }
   };
 
-  // Transform events to include editability
-  const processedEvents = events.map(event => ({
-    ...event,
-    editable: isEventEditable(event),
-    startEditable: isEventEditable(event),
-    durationEditable: isEventEditable(event) && view !== 'dayGridMonth'
-  }));
+  // FIXED: Process events to ensure proper date handling
+  // The backend already converts times to facility timezone, so we just need to ensure
+  // FullCalendar gets proper Date objects
+  const processedEvents = events.map(event => {
+    // Trust the backend times - they're already in facility timezone
+    const processedEvent = {
+      ...event,
+      // Ensure start and end are Date objects for FullCalendar
+      start: typeof event.start === 'string' ? new Date(event.start) : event.start,
+      end: typeof event.end === 'string' ? new Date(event.end) : event.end,
+      // Set editability based on business rules
+      editable: isEventEditable(event),
+      startEditable: isEventEditable(event),
+      durationEditable: isEventEditable(event) && view !== 'dayGridMonth'
+    };
+
+    // Debug logging to verify times
+    if (event.extendedProps?.debug) {
+      console.log(`Event ${event.id} display times:`, {
+        original: event.start,
+        processed: processedEvent.start,
+        timezone: event.extendedProps.facilityTimezone
+      });
+    }
+
+    return processedEvent;
+  });
 
   return (
     <div className="calendar-view-container">
@@ -323,6 +343,9 @@ function CalendarView({
         eventDisplay="block"
         dayMaxEvents={true}
         moreLinkClick="popover"
+        // IMPORTANT: Let FullCalendar handle the timezone display
+        // The times from backend are already in facility timezone
+        timeZone="local"
         eventTimeFormat={{
           hour: 'numeric',
           minute: '2-digit',
