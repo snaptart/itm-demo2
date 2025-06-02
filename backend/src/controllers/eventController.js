@@ -1,9 +1,9 @@
-// backend/src/controllers/eventController.js (Simplified - Local Time)
+// backend/src/controllers/eventController.js (Fixed V2 - String Format)
 const { Event, Episode, Resource, Facility, Booking } = require('../models');
 const { Op } = require('sequelize');
 
 const eventController = {
-  // Create new event - no timezone conversion needed
+  // Create new event - format times as strings
   async createEvent(req, res) {
     try {
       const {
@@ -49,24 +49,39 @@ const eventController = {
         });
       }
 
-      // Times are already in facility local time from frontend
-      const startDateTime = new Date(event_start_date_time);
-      const endDateTime = new Date(event_end_date_time);
+      // Format datetime strings properly for database
+      const formatDateTimeForDB = (dateTimeStr) => {
+        // Parse the input string
+        let date;
+        
+        if (dateTimeStr instanceof Date) {
+          date = dateTimeStr;
+        } else if (typeof dateTimeStr === 'string') {
+          // Handle ISO format or other formats
+          date = new Date(dateTimeStr.replace('T', ' ').split('.')[0].split('Z')[0]);
+        } else {
+          throw new Error('Invalid date format');
+        }
+        
+        if (isNaN(date.getTime())) {
+          throw new Error('Invalid date');
+        }
+        
+        // Format as YYYY-MM-DD HH:MM:SS
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      };
 
-      // Validate times
-      if (isNaN(startDateTime.getTime()) || isNaN(endDateTime.getTime())) {
-        return res.status(400).json({ 
-          message: 'Invalid date format provided' 
-        });
-      }
+      const startDateTimeStr = formatDateTimeForDB(event_start_date_time);
+      const endDateTimeStr = formatDateTimeForDB(event_end_date_time);
 
-      if (startDateTime >= endDateTime) {
-        return res.status(400).json({ 
-          message: 'End time must be after start time' 
-        });
-      }
-
-      console.log(`Storing event with local times: ${startDateTime.toISOString()} to ${endDateTime.toISOString()}`);
+      console.log(`Storing event with formatted times: ${startDateTimeStr} to ${endDateTimeStr}`);
 
       const createdEvents = [];
       
@@ -74,8 +89,8 @@ const eventController = {
         // Create single event
         const event = await createSingleEvent({
           resource_id,
-          event_start_date_time: startDateTime,
-          event_end_date_time: endDateTime,
+          event_start_date_time: startDateTimeStr,
+          event_end_date_time: endDateTimeStr,
           episode_duration: episode_duration || 60,
           created_by: req.user.username
         });
@@ -89,8 +104,8 @@ const eventController = {
         // Create recurring events
         const recurringEvents = await createRecurringEvents({
           resource_id,
-          startDateTime,
-          endDateTime,
+          startDateTimeStr,
+          endDateTimeStr,
           episode_duration: episode_duration || 60,
           repeat_mode,
           repeat_end_date,
@@ -156,16 +171,11 @@ const eventController = {
 
       const whereClause = { resource_id: resourceId };
       
-      // Date range filter - times are already in local timezone
+      // Date range filter
       if (start && end) {
-        const startDate = new Date(start);
-        const endDate = new Date(end);
-        
-        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-          whereClause.event_start_date_time = {
-            [Op.between]: [startDate, endDate]
-          };
-        }
+        whereClause.event_start_date_time = {
+          [Op.between]: [start, end]
+        };
       }
 
       const events = await Event.findAll({
@@ -275,12 +285,8 @@ async function createSingleEvent(eventData) {
 
   return await Event.create({
     resource_id,
-    event_start_date_time,
-    event_end_date_time,
-    event_start_date: event_start_date_time.toISOString().split('T')[0],
-    event_end_date: event_end_date_time.toISOString().split('T')[0],
-    event_start_time: event_start_date_time.toTimeString().split(' ')[0],
-    event_end_time: event_end_date_time.toTimeString().split(' ')[0],
+    event_start_date_time, // Already formatted as string
+    event_end_date_time,   // Already formatted as string
     episode_duration,
     repeat_mode: 'once',
     created_by,
@@ -292,8 +298,8 @@ async function createSingleEvent(eventData) {
 async function createRecurringEvents(eventData) {
   const {
     resource_id,
-    startDateTime,
-    endDateTime,
+    startDateTimeStr,
+    endDateTimeStr,
     episode_duration,
     repeat_mode,
     repeat_end_date,
@@ -302,11 +308,24 @@ async function createRecurringEvents(eventData) {
   } = eventData;
 
   const events = [];
-  const timeDiff = endDateTime.getTime() - startDateTime.getTime();
+  
+  // Parse the date strings to get date objects for calculation
+  const [startDatePart, startTimePart] = startDateTimeStr.split(' ');
+  const [endDatePart, endTimePart] = endDateTimeStr.split(' ');
+  
+  const [startYear, startMonth, startDay] = startDatePart.split('-').map(Number);
+  const [startHour, startMinute, startSecond] = startTimePart.split(':').map(Number);
+  
+  const [endYear, endMonth, endDay] = endDatePart.split('-').map(Number);
+  const [endHour, endMinute, endSecond] = endTimePart.split(':').map(Number);
+  
+  const startDate = new Date(startYear, startMonth - 1, startDay, startHour, startMinute, startSecond);
+  const endDate = new Date(endYear, endMonth - 1, endDay, endHour, endMinute, endSecond);
+  const timeDiff = endDate.getTime() - startDate.getTime();
   
   const repeatEndDate = new Date(repeat_end_date + 'T23:59:59');
   
-  let currentDate = new Date(startDateTime);
+  let currentDate = new Date(startDate);
   
   while (currentDate <= repeatEndDate) {
     let shouldCreate = false;
@@ -324,7 +343,7 @@ async function createRecurringEvents(eventData) {
         
       case 'biweekly':
         if (repeat_days && repeat_days.includes(currentDate.getDay())) {
-          const weeksDiff = Math.floor((currentDate - startDateTime) / (7 * 24 * 60 * 60 * 1000));
+          const weeksDiff = Math.floor((currentDate - startDate) / (7 * 24 * 60 * 60 * 1000));
           if (weeksDiff % 2 === 0) {
             shouldCreate = true;
           }
@@ -336,14 +355,22 @@ async function createRecurringEvents(eventData) {
       const eventStart = new Date(currentDate);
       const eventEnd = new Date(currentDate.getTime() + timeDiff);
       
+      // Format dates as strings
+      const formatDateTime = (date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      };
+      
       const event = await Event.create({
         resource_id,
-        event_start_date_time: eventStart,
-        event_end_date_time: eventEnd,
-        event_start_date: eventStart.toISOString().split('T')[0],
-        event_end_date: eventEnd.toISOString().split('T')[0],
-        event_start_time: eventStart.toTimeString().split(' ')[0],
-        event_end_time: eventEnd.toTimeString().split(' ')[0],
+        event_start_date_time: formatDateTime(eventStart),
+        event_end_date_time: formatDateTime(eventEnd),
         episode_duration,
         repeat_mode,
         created_by,
@@ -362,8 +389,19 @@ async function createRecurringEvents(eventData) {
 
 // Helper function to generate episodes for an event
 async function generateEpisodesForEvent(event, resource, user, episodeData = {}) {
-  const startTime = new Date(event.event_start_date_time);
-  const endTime = new Date(event.event_end_date_time);
+  // Parse datetime strings
+  const parseDateTime = (dateTimeStr) => {
+    if (typeof dateTimeStr === 'string') {
+      const [datePart, timePart] = dateTimeStr.split(' ');
+      const [year, month, day] = datePart.split('-').map(Number);
+      const [hour, minute, second] = timePart.split(':').map(Number);
+      return new Date(year, month - 1, day, hour, minute, second);
+    }
+    return new Date(dateTimeStr);
+  };
+
+  const startTime = parseDateTime(event.event_start_date_time);
+  const endTime = parseDateTime(event.event_end_date_time);
   const duration = event.episode_duration || 60; // in minutes
 
   const episodes = [];
@@ -376,10 +414,22 @@ async function generateEpisodesForEvent(event, resource, user, episodeData = {})
       break;
     }
 
+    // Format dates as strings
+    const formatDateTime = (date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const seconds = String(date.getSeconds()).padStart(2, '0');
+      
+      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    };
+
     episodes.push({
       event_id: event.event_id,
-      episode_start_date_time: new Date(currentStart),
-      episode_end_date_time: new Date(currentEnd),
+      episode_start_date_time: formatDateTime(currentStart),
+      episode_end_date_time: formatDateTime(currentEnd),
       episode_duration: duration,
       episode_title: episodeData.episode_title || `Ice Time - ${resource.resource_name}`,
       episode_description: episodeData.episode_description || '',

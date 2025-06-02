@@ -1,6 +1,7 @@
-// backend/src/models/Episode.js (Simplified - Local Time Storage)
+// backend/src/models/Episode.js (Fixed V2 - Using Custom Type)
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
+const { TIMESTAMP_NO_TZ } = require('../config/database');
 
 const Episode = sequelize.define('Episode', {
   episode_id: {
@@ -33,14 +34,14 @@ const Episode = sequelize.define('Episode', {
     type: DataTypes.INTEGER,
     defaultValue: 0
   },
-  // Store times in facility local timezone
+  // Use custom type that doesn't convert timezone
   episode_start_date_time: {
-    type: DataTypes.DATE,
+    type: TIMESTAMP_NO_TZ,
     allowNull: false,
     comment: 'Stored in facility local time'
   },
   episode_end_date_time: {
-    type: DataTypes.DATE,
+    type: TIMESTAMP_NO_TZ,
     allowNull: false,
     comment: 'Stored in facility local time'
   },
@@ -148,56 +149,6 @@ Episode.prototype.canBeEdited = function(user) {
   if (this.episode_status === 'booked') return false;
   
   return true;
-};
-
-// Validate against business hours (simplified)
-Episode.prototype.validateBusinessHours = function(facility) {
-  const violations = [];
-  const warnings = [];
-  
-  if (!facility) {
-    violations.push('Facility information not available');
-    return { violations, warnings };
-  }
-  
-  const episodeStart = new Date(this.episode_start_date_time);
-  const episodeEnd = new Date(this.episode_end_date_time);
-  
-  const startTimeStr = episodeStart.toTimeString().slice(0, 5);
-  const endTimeStr = episodeEnd.toTimeString().slice(0, 5);
-  
-  // Check against facility hours
-  if (facility.facility_daily_start_time && facility.facility_daily_end_time) {
-    const businessStart = facility.facility_daily_start_time.slice(0, 5);
-    const businessEnd = facility.facility_daily_end_time.slice(0, 5);
-    
-    if (startTimeStr < businessStart || endTimeStr > businessEnd) {
-      violations.push(`Episode time (${startTimeStr} - ${endTimeStr}) is outside business hours (${businessStart} - ${businessEnd})`);
-    }
-  }
-  
-  // Check for unusual hours
-  const startHour = episodeStart.getHours();
-  const endHour = episodeEnd.getHours();
-  
-  if (startHour < 6 || endHour > 22) {
-    warnings.push('Episode is scheduled outside typical arena operating hours');
-  }
-  
-  return { violations, warnings };
-};
-
-// Check for conflicts
-Episode.prototype.checkConflictsWith = function(otherEpisode) {
-  if (!otherEpisode || this.episode_id === otherEpisode.episode_id) return false;
-  
-  const thisStart = new Date(this.episode_start_date_time);
-  const thisEnd = new Date(this.episode_end_date_time);
-  const otherStart = new Date(otherEpisode.episode_start_date_time);
-  const otherEnd = new Date(otherEpisode.episode_end_date_time);
-  
-  // Check for overlap
-  return thisStart < otherEnd && otherStart < thisEnd;
 };
 
 // Associations

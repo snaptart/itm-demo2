@@ -1,6 +1,7 @@
-// backend/src/models/Event.js (Simplified - Local Time Storage)
+// backend/src/models/Event.js (Fixed V2 - Using Custom Type)
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
+const { TIMESTAMP_NO_TZ } = require('../config/database');
 
 const Event = sequelize.define('Event', {
   event_id: {
@@ -30,13 +31,13 @@ const Event = sequelize.define('Event', {
   event_end_time: {
     type: DataTypes.TIME
   },
-  // Store times in facility local timezone
+  // Use custom type that doesn't convert timezone
   event_start_date_time: {
-    type: DataTypes.DATE,
+    type: TIMESTAMP_NO_TZ,
     comment: 'Stored in facility local time'
   },
   event_end_date_time: {
-    type: DataTypes.DATE,
+    type: TIMESTAMP_NO_TZ,
     comment: 'Stored in facility local time'
   },
   repeat_mode: {
@@ -60,7 +61,7 @@ const Event = sequelize.define('Event', {
     type: DataTypes.INTEGER
   },
   event_last_date_time: {
-    type: DataTypes.DATE
+    type: TIMESTAMP_NO_TZ
   },
   num_conflicts: {
     type: DataTypes.INTEGER
@@ -116,90 +117,70 @@ Event.prototype.getExpectedEpisodeCount = function() {
   return Math.floor(totalDuration / this.episode_duration);
 };
 
-// Validation without timezone complexity
-Event.prototype.validateAgainstFacility = function(facility) {
-  const violations = [];
-  const warnings = [];
-  
-  if (!facility) {
-    violations.push('Facility information not available for validation');
-    return { violations, warnings };
-  }
-  
-  const eventStart = new Date(this.event_start_date_time);
-  const eventEnd = new Date(this.event_end_date_time);
-  
-  if (!eventStart || !eventEnd || isNaN(eventStart.getTime()) || isNaN(eventEnd.getTime())) {
-    violations.push('Invalid event times');
-    return { violations, warnings };
-  }
-  
-  // Check against facility operating hours
-  if (facility.facility_daily_start_time && facility.facility_daily_end_time) {
-    const eventStartTime = eventStart.toTimeString().slice(0, 5);
-    const eventEndTime = eventEnd.toTimeString().slice(0, 5);
-    const operatingStart = facility.facility_daily_start_time.slice(0, 5);
-    const operatingEnd = facility.facility_daily_end_time.slice(0, 5);
-    
-    if (eventStartTime < operatingStart || eventEndTime > operatingEnd) {
-      violations.push(`Event time (${eventStartTime} - ${eventEndTime}) is outside facility operating hours (${operatingStart} - ${operatingEnd})`);
-    }
-  }
-  
-  // Check duration constraints
-  const duration = this.getDuration();
-  
-  if (facility.min_booking_duration && duration < facility.min_booking_duration) {
-    violations.push(`Event duration (${duration} min) is less than facility minimum (${facility.min_booking_duration} min)`);
-  }
-  
-  if (facility.max_booking_duration && duration > facility.max_booking_duration) {
-    violations.push(`Event duration (${duration} min) exceeds facility maximum (${facility.max_booking_duration} min)`);
-  }
-  
-  return { violations, warnings };
-};
-
-// Check for conflicts
-Event.prototype.checkConflictsWith = function(otherEvent) {
-  if (!otherEvent || this.event_id === otherEvent.event_id) return false;
-  if (this.resource_id !== otherEvent.resource_id) return false;
-  
-  const thisStart = new Date(this.event_start_date_time);
-  const thisEnd = new Date(this.event_end_date_time);
-  const otherStart = new Date(otherEvent.event_start_date_time);
-  const otherEnd = new Date(otherEvent.event_end_date_time);
-  
-  // Check for overlap
-  return thisStart < otherEnd && otherStart < thisEnd;
-};
-
 // Hook to update legacy date/time fields
 Event.addHook('beforeSave', (event, options) => {
-  if (event.event_start_date_time) {
-    // Extract time directly from the timestamp string
-    const timeMatch = event.event_start_date_time.toString().match(/(\d{2}):(\d{2}):(\d{2})/);
-    if (timeMatch) {
-      event.event_start_time = `${timeMatch[1]}:${timeMatch[2]}:${timeMatch[3]}`;
-    }
+  // Extract from the datetime values that will be saved
+  const startDateTime = event.event_start_date_time;
+  const endDateTime = event.event_end_date_time;
+  
+  if (startDateTime) {
+    let dateStr = startDateTime;
     
-    // Extract date
-    const dateMatch = event.event_start_date_time.toString().match(/(\d{4})-(\d{2})-(\d{2})/);
-    if (dateMatch) {
-      event.event_start_date = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+    // Convert to string if needed
+    if (startDateTime instanceof Date) {
+      const year = startDateTime.getFullYear();
+      const month = String(startDateTime.getMonth() + 1).padStart(2, '0');
+      const day = String(startDateTime.getDate()).padStart(2, '0');
+      const hours = String(startDateTime.getHours()).padStart(2, '0');
+      const minutes = String(startDateTime.getMinutes()).padStart(2, '0');
+      const seconds = String(startDateTime.getSeconds()).padStart(2, '0');
+      
+      dateStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      event.event_start_time = `${hours}:${minutes}:${seconds}`;
+      event.event_start_date = `${year}-${month}-${day}`;
+    } else if (typeof dateStr === 'string') {
+      // Extract from string
+      const dateMatch = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
+      const timeMatch = dateStr.match(/(\d{2}):(\d{2}):(\d{2})/);
+      
+      if (dateMatch) {
+        event.event_start_date = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+      }
+      
+      if (timeMatch) {
+        event.event_start_time = `${timeMatch[1]}:${timeMatch[2]}:${timeMatch[3]}`;
+      }
     }
   }
   
   // Same for end time
-  if (event.event_end_date_time) {
-    const timeMatch = event.event_end_date_time.toString().match(/(\d{2}):(\d{2}):(\d{2})/);
-    if (timeMatch) {
-      event.event_end_time = `${timeMatch[1]}:${timeMatch[2]}:${timeMatch[3]}`;
-    }
+  if (endDateTime) {
+    let dateStr = endDateTime;
     
-    const dateMatch = event.event_end_date_time.toString().match(/(\d{4})-(\d{2})-(\d{2})/);
-    if (dateMatch) {
-      event.event_end_date = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+    // Convert to string if needed
+    if (endDateTime instanceof Date) {
+      const year = endDateTime.getFullYear();
+      const month = String(endDateTime.getMonth() + 1).padStart(2, '0');
+      const day = String(endDateTime.getDate()).padStart(2, '0');
+      const hours = String(endDateTime.getHours()).padStart(2, '0');
+      const minutes = String(endDateTime.getMinutes()).padStart(2, '0');
+      const seconds = String(endDateTime.getSeconds()).padStart(2, '0');
+      
+      dateStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      event.event_end_time = `${hours}:${minutes}:${seconds}`;
+      event.event_end_date = `${year}-${month}-${day}`;
+    } else if (typeof dateStr === 'string') {
+      // Extract from string
+      const dateMatch = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/);
+      const timeMatch = dateStr.match(/(\d{2}):(\d{2}):(\d{2})/);
+      
+      if (dateMatch) {
+        event.event_end_date = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+      }
+      
+      if (timeMatch) {
+        event.event_end_time = `${timeMatch[1]}:${timeMatch[2]}:${timeMatch[3]}`;
+      }
     }
   }
 });

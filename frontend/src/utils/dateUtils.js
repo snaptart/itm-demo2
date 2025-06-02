@@ -1,4 +1,4 @@
-// frontend/src/utils/dateUtils.js (Simplified - Local Time Only)
+// frontend/src/utils/dateUtils.js (Fixed - Local Time Only)
 
 export const dateUtils = {
   // Default facility timezone for display purposes only
@@ -90,9 +90,12 @@ export const dateUtils = {
     if (!dateStr || !timeStr) return null;
     
     try {
-      // Create datetime string
-      const dateTimeStr = `${dateStr}T${timeStr}:00`;
-      const date = new Date(dateTimeStr);
+      // Parse date and time separately
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const [hour, minute] = timeStr.split(':').map(Number);
+      
+      // Create date in local time
+      const date = new Date(year, month - 1, day, hour, minute, 0);
       
       return isNaN(date.getTime()) ? null : date;
     } catch (error) {
@@ -101,22 +104,28 @@ export const dateUtils = {
     }
   },
 
-  // Format date for API calls
-	formatForAPI(date) {
-	  if (!date) return null;
-	  const d = new Date(date);
-	  if (isNaN(d.getTime())) return null;
-	  
-	  // Format as YYYY-MM-DD HH:MM:SS (local time, no timezone)
-	  const year = d.getFullYear();
-	  const month = String(d.getMonth() + 1).padStart(2, '0');
-	  const day = String(d.getDate()).padStart(2, '0');
-	  const hours = String(d.getHours()).padStart(2, '0');
-	  const minutes = String(d.getMinutes()).padStart(2, '0');
-	  const seconds = String(d.getSeconds()).padStart(2, '0');
-	  
-	  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-	},
+  // Format date for API calls - FIXED to avoid timezone conversion
+  formatForAPI(date) {
+    if (!date) return null;
+    
+    try {
+      const d = new Date(date);
+      if (isNaN(d.getTime())) return null;
+      
+      // Format as YYYY-MM-DD HH:MM:SS (local time, no timezone)
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      const seconds = String(d.getSeconds()).padStart(2, '0');
+      
+      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    } catch (error) {
+      console.error('Format for API failed:', error);
+      return null;
+    }
+  },
 
   // Check if date is in the past
   isPast(date) {
