@@ -1,3 +1,4 @@
+// backend/src/routes/index.js - Updated version
 const express = require('express');
 const router = express.Router();
 
@@ -7,10 +8,10 @@ const facilityRoutes = require('./facilities');
 const resourceRoutes = require('./resources');
 const episodeRoutes = require('./episodes');
 const eventRoutes = require('./events');
+const programRoutes = require('./programs'); // Added
 // Future routes to be added
 // const userRoutes = require('./users');
 // const bookingRoutes = require('./bookings');
-// const programRoutes = require('./programs');
 // const notificationRoutes = require('./notifications');
 
 // Mount routes
@@ -19,10 +20,10 @@ router.use('/facilities', facilityRoutes);
 router.use('/resources', resourceRoutes);
 router.use('/episodes', episodeRoutes);
 router.use('/events', eventRoutes);
+router.use('/programs', programRoutes); // Added
 // Future routes
 // router.use('/users', userRoutes);
 // router.use('/bookings', bookingRoutes);
-// router.use('/programs', programRoutes);
 // router.use('/notifications', notificationRoutes);
 
 // Health check endpoint
