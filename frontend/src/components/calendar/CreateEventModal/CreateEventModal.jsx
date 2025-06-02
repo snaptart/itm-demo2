@@ -1,4 +1,4 @@
-// frontend/src/components/calendar/CreateEventModal/CreateEventModal.jsx (Fixed UTC Handling)
+// frontend/src/components/calendar/CreateEventModal/CreateEventModal.jsx (Simplified - Local Time)
 import React, { useState, useEffect, useMemo } from 'react';
 import { dateUtils } from '../../../utils/dateUtils';
 import './CreateEventModal.css';
@@ -16,7 +16,6 @@ function CreateEventModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [resources, setResources] = useState([]);
-  const [timezoneInfo, setTimezoneInfo] = useState(null);
   const [businessHoursValidation, setBusinessHoursValidation] = useState(null);
   
   // Safety check for required props
@@ -24,20 +23,21 @@ function CreateEventModal({
     return null;
   }
   
-  // Determine facility timezone
+  // Timezone for display only
   const facilityTimezone = facility.facility_time_zone || dateUtils.DEFAULT_TIMEZONE;
+  const timezoneAbbr = dateUtils.getTimezoneDisplayName(facilityTimezone);
   
   // Helper function to calculate smart default times
   const calculateSmartDefaultTimes = (selectedDateInfo, facilityInfo) => {
     // If a specific time was clicked on the calendar, use it
     if (selectedDateInfo?.clickedTime && !selectedDateInfo.allDay) {
       const clickedDate = new Date(selectedDateInfo.clickedTime);
-      const startTime = dateUtils.extractTimeString(clickedDate, facilityTimezone);
+      const startTime = dateUtils.extractTimeString(clickedDate);
       
       // Calculate end time (1 hour later)
       const endDate = new Date(clickedDate);
       endDate.setHours(endDate.getHours() + 1);
-      const endTime = dateUtils.extractTimeString(endDate, facilityTimezone);
+      const endTime = dateUtils.extractTimeString(endDate);
       
       return { startTime, endTime };
     }
@@ -82,7 +82,7 @@ function CreateEventModal({
   
   const [formData, setFormData] = useState({
     resource_id: selectedResource || '',
-    event_date: selectedDate ? dateUtils.extractDateString(selectedDate?.date || selectedDate, facilityTimezone) : '',
+    event_date: selectedDate ? dateUtils.extractDateString(selectedDate?.date || selectedDate) : '',
     start_time: defaultTimes.startTime,
     end_time: defaultTimes.endTime,
     episode_duration: 60,
@@ -102,59 +102,36 @@ function CreateEventModal({
     }
 
     try {
-      // Create facility datetime objects
-      const facilityStartDateTime = dateUtils.createFacilityDateTime(
-        formData.event_date, 
-        formData.start_time, 
-        facilityTimezone
-      );
-      const facilityEndDateTime = dateUtils.createFacilityDateTime(
-        formData.event_date, 
-        formData.end_time, 
-        facilityTimezone
-      );
+      // Create datetime objects
+      const startDateTime = dateUtils.createDateTime(formData.event_date, formData.start_time);
+      const endDateTime = dateUtils.createDateTime(formData.event_date, formData.end_time);
 
-      if (!facilityStartDateTime || !facilityEndDateTime) {
+      if (!startDateTime || !endDateTime) {
         return null;
       }
 
-      // Convert to UTC for API
-      const utcStartDateTime = dateUtils.convertFacilityTimeToUTC(facilityStartDateTime, facilityTimezone);
-      const utcEndDateTime = dateUtils.convertFacilityTimeToUTC(facilityEndDateTime, facilityTimezone);
-
-      const duration = dateUtils.getDuration(facilityStartDateTime, facilityEndDateTime);
-      const isValidRange = facilityEndDateTime > facilityStartDateTime;
-      const isPast = dateUtils.isPast(facilityStartDateTime, facilityTimezone);
+      const duration = dateUtils.getDuration(startDateTime, endDateTime);
+      const isValidRange = endDateTime > startDateTime;
+      const isPast = dateUtils.isPast(startDateTime);
       
       return {
-        facilityStartDateTime,
-        facilityEndDateTime,
-        utcStartDateTime,
-        utcEndDateTime,
+        startDateTime,
+        endDateTime,
         duration,
         isValidRange,
         isPast,
-        displayStart: dateUtils.formatForDisplay(facilityStartDateTime, facilityTimezone, {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true
-        }),
-        displayEnd: dateUtils.formatTimeOnly(facilityEndDateTime, facilityTimezone),
-        timezoneDisplay: dateUtils.getTimezoneDisplayName(facilityTimezone)
+        displayStart: dateUtils.formatForDisplay(startDateTime),
+        displayEnd: dateUtils.formatTimeOnly(endDateTime)
       };
     } catch (error) {
       console.error('Error computing values:', error);
       return null;
     }
-  }, [formData.event_date, formData.start_time, formData.end_time, facilityTimezone]);
+  }, [formData.event_date, formData.start_time, formData.end_time]);
 
   useEffect(() => {
     if (facility && isOpen) {
       loadResources();
-      loadTimezoneInfo();
     }
   }, [facility, isOpen]);
 
@@ -165,12 +142,12 @@ function CreateEventModal({
       
       setFormData(prev => ({
         ...prev,
-        event_date: dateUtils.extractDateString(selectedDate?.date || selectedDate, facilityTimezone),
+        event_date: dateUtils.extractDateString(selectedDate?.date || selectedDate),
         start_time: newDefaultTimes.startTime,
         end_time: newDefaultTimes.endTime
       }));
     }
-  }, [selectedDate, facilityTimezone]);
+  }, [selectedDate]);
 
   useEffect(() => {
     if (selectedResource) {
@@ -183,7 +160,7 @@ function CreateEventModal({
 
   // Validate business hours when time changes
   useEffect(() => {
-    if (computedValues?.facilityStartDateTime && computedValues?.facilityEndDateTime) {
+    if (computedValues?.startDateTime && computedValues?.endDateTime) {
       validateBusinessHours();
     }
   }, [computedValues, facility]);
@@ -212,40 +189,13 @@ function CreateEventModal({
     }
   };
 
-  const loadTimezoneInfo = () => {
-    try {
-      const info = {
-        timezone: facilityTimezone,
-        displayName: dateUtils.getTimezoneDisplayName(facilityTimezone),
-        currentTime: dateUtils.formatForDisplay(
-          new Date(), 
-          facilityTimezone, 
-          {
-            hour: 'numeric',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: true,
-            timeZoneName: 'short'
-          }
-        ),
-        businessHours: {
-          start: facility.facility_daily_start_time || '06:00:00',
-          end: facility.facility_daily_end_time || '23:00:00'
-        }
-      };
-      setTimezoneInfo(info);
-    } catch (error) {
-      console.error('Failed to load timezone info:', error);
-    }
-  };
-
   const validateBusinessHours = () => {
-    if (!computedValues || !timezoneInfo) return;
+    if (!computedValues) return;
 
     const startTime = formData.start_time;
     const endTime = formData.end_time;
-    const businessStart = timezoneInfo.businessHours.start.slice(0, 5); // HH:MM
-    const businessEnd = timezoneInfo.businessHours.end.slice(0, 5); // HH:MM
+    const businessStart = (facility.facility_daily_start_time || '06:00:00').slice(0, 5);
+    const businessEnd = (facility.facility_daily_end_time || '23:00:00').slice(0, 5);
 
     const violations = [];
     const warnings = [];
@@ -254,7 +204,7 @@ function CreateEventModal({
     if (startTime < businessStart || endTime > businessEnd) {
       violations.push({
         type: 'business_hours',
-        message: `Times must be between ${businessStart} - ${businessEnd} (${timezoneInfo.displayName})`
+        message: `Times must be between ${businessStart} - ${businessEnd}`
       });
     }
 
@@ -355,13 +305,9 @@ function CreateEventModal({
         return false;
       }
       
-      const repeatEndDateTime = dateUtils.createFacilityDateTime(
-        formData.repeat_end_date,
-        '23:59',
-        facilityTimezone
-      );
+      const repeatEndDateTime = dateUtils.createDateTime(formData.repeat_end_date, '23:59');
       
-      if (repeatEndDateTime <= computedValues.facilityStartDateTime) {
+      if (repeatEndDateTime <= computedValues.startDateTime) {
         setError('Repeat end date must be after the start date');
         return false;
       }
@@ -384,16 +330,14 @@ function CreateEventModal({
       setLoading(true);
       setError('');
       
-      // Prepare event data with UTC times
+      // Prepare event data with local times
       const eventData = {
         resource_id: parseInt(formData.resource_id),
-        // Send UTC times to backend
-        event_start_date_time: computedValues.utcStartDateTime,
-        event_end_date_time: computedValues.utcEndDateTime,
+        event_start_date_time: dateUtils.formatForAPI(computedValues.startDateTime),
+        event_end_date_time: dateUtils.formatForAPI(computedValues.endDateTime),
         episode_duration: parseInt(formData.episode_duration),
         repeat_mode: formData.repeat_mode,
-        generate_episodes: formData.generate_episodes,
-        facility_timezone: facilityTimezone
+        generate_episodes: formData.generate_episodes
       };
       
       console.log('Submitting event data:', eventData);
@@ -416,7 +360,7 @@ function CreateEventModal({
         };
       }
       
-      const result = await calendarService.createEvent(eventData, facilityTimezone);
+      const result = await calendarService.createEvent(eventData);
       
       if (result.success) {
         onSuccess();
@@ -479,25 +423,23 @@ function CreateEventModal({
         <div className="create-event-form">
           <div className="modal-body">
             {/* Timezone Information Panel */}
-            {timezoneInfo && (
-              <div className="timezone-info-panel">
-                <div className="timezone-header">
-                  <span className="timezone-icon">🌍</span>
-                  <div className="timezone-details">
-                    <div className="timezone-name">{facility.facility_name}</div>
-                    <div className="timezone-current">
-                      {timezoneInfo.currentTime}
-                    </div>
+            <div className="timezone-info-panel">
+              <div className="timezone-header">
+                <span className="timezone-icon">🌍</span>
+                <div className="timezone-details">
+                  <div className="timezone-name">{facility.facility_name}</div>
+                  <div className="timezone-current">
+                    All times are in {timezoneAbbr}
                   </div>
                 </div>
-                <div className="business-hours">
-                  <span className="business-hours-label">Business Hours:</span>
-                  <span className="business-hours-time">
-                    {timezoneInfo.businessHours.start.slice(0, 5)} - {timezoneInfo.businessHours.end.slice(0, 5)}
-                  </span>
-                </div>
               </div>
-            )}
+              <div className="business-hours">
+                <span className="business-hours-label">Business Hours:</span>
+                <span className="business-hours-time">
+                  {(facility.facility_daily_start_time || '06:00:00').slice(0, 5)} - {(facility.facility_daily_end_time || '23:00:00').slice(0, 5)}
+                </span>
+              </div>
+            </div>
 
             <div className="form-section">
               <h3>Basic Information</h3>
@@ -530,12 +472,12 @@ function CreateEventModal({
                     onChange={handleInputChange}
                     required
                     disabled={loading}
-                    min={dateUtils.extractDateString(new Date(), facilityTimezone)}
+                    min={dateUtils.extractDateString(new Date())}
                   />
                 </div>
 
                 <div className="form-group">
-                  <label>Start Time * ({timezoneInfo?.displayName})</label>
+                  <label>Start Time *</label>
                   <input
                     type="time"
                     name="start_time"
@@ -547,7 +489,7 @@ function CreateEventModal({
                 </div>
 
                 <div className="form-group">
-                  <label>End Time * ({timezoneInfo?.displayName})</label>
+                  <label>End Time *</label>
                   <input
                     type="time"
                     name="end_time"
@@ -568,7 +510,7 @@ function CreateEventModal({
                   </div>
                   <div className="preview-details">
                     <div className="preview-time">
-                      {computedValues.displayStart} - {computedValues.displayEnd}
+                      {computedValues.displayStart} - {computedValues.displayEnd} {timezoneAbbr}
                     </div>
                     <div className="preview-duration">
                       Duration: {dateUtils.formatDuration(computedValues.duration)}
@@ -750,3 +692,4 @@ function CreateEventModal({
 }
 
 export default CreateEventModal;
+    

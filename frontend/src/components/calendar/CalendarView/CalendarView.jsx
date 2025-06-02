@@ -1,4 +1,4 @@
-// frontend/src/components/calendar/CalendarView/CalendarView.jsx - Fixed UTC Handling
+// frontend/src/components/calendar/CalendarView/CalendarView.jsx - Simplified Local Time
 import React, { useRef, useEffect } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -89,7 +89,7 @@ function CalendarView({
       return;
     }
 
-    // Get new times from the event (these are already in facility timezone from CalendarService)
+    // Get new times from the event
     const newStart = event.start;
     const newEnd = event.end;
     
@@ -106,7 +106,6 @@ function CalendarView({
       episodeId,
       newStartTime: newStart.toISOString(),
       newEndTime: newEnd.toISOString(),
-      facilityTimezone: event.extendedProps.facilityTimezone,
       delta: {
         days: Math.round(delta.days || 0),
         milliseconds: delta.milliseconds || 0
@@ -137,7 +136,7 @@ function CalendarView({
       return;
     }
 
-    // Get new end time (already in facility timezone)
+    // Get new end time
     const newEnd = event.end;
     const duration = Math.round((newEnd - event.start) / (1000 * 60)); // in minutes
     
@@ -159,7 +158,6 @@ function CalendarView({
     const resizeData = {
       episodeId,
       newEndTime: newEnd.toISOString(),
-      facilityTimezone: event.extendedProps.facilityTimezone,
       newDuration: duration,
       endDelta: {
         days: Math.round(endDelta.days || 0),
@@ -279,7 +277,6 @@ function CalendarView({
   };
 
   // Process events to ensure proper handling
-  // Events from CalendarService are already converted to facility timezone
   const processedEvents = events.map(event => {
     // Ensure dates are Date objects for FullCalendar
     const processedEvent = {
@@ -334,9 +331,6 @@ function CalendarView({
         eventDisplay="block"
         dayMaxEvents={true}
         moreLinkClick="popover"
-        // IMPORTANT: Use 'local' to display times as-is
-        // The times are already converted to facility timezone by CalendarService
-        timeZone="local"
         eventTimeFormat={{
           hour: 'numeric',
           minute: '2-digit',

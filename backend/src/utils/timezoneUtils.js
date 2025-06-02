@@ -1,87 +1,36 @@
-// backend/src/utils/timezoneUtils.js (Simplified for Phase 3B)
+// backend/src/utils/timezoneUtils.js (Simplified - Local Time Only)
 class TimezoneUtils {
   
   // Default timezone for facilities
   static DEFAULT_TIMEZONE = 'America/Chicago';
 
-  // Convert UTC datetime to facility timezone (simplified)
-  static convertToFacilityTime(utcDateTime, facilityTimezone = this.DEFAULT_TIMEZONE) {
-    if (!utcDateTime) return null;
-    
-    try {
-      // Simplified conversion - just return the date object
-      // In production, would use moment-timezone or similar
-      return new Date(utcDateTime);
-    } catch (error) {
-      console.warn('Facility timezone conversion failed:', error);
-      return new Date(utcDateTime);
-    }
+  // Get current time as string for logging
+  static getCurrentTimeString() {
+    return new Date().toLocaleString();
   }
 
-  // Convert facility timezone datetime to UTC (simplified)
-  static convertToUTC(facilityDateTime, facilityTimezone = this.DEFAULT_TIMEZONE) {
-    if (!facilityDateTime) return null;
+  // Format datetime for display with timezone label
+  static formatForDisplay(dateTime, timezone = this.DEFAULT_TIMEZONE) {
+    if (!dateTime) return null;
     
     try {
-      // Simplified conversion
-      return new Date(facilityDateTime);
-    } catch (error) {
-      console.warn('UTC conversion failed:', error);
-      return new Date(facilityDateTime);
-    }
-  }
-
-	// Parse datetime string and convert to UTC for database storage
-	static parseAndConvertToUTC(dateTimeString, facilityTimezone = this.DEFAULT_TIMEZONE) {
-	  if (!dateTimeString) return null;
-	  
-	  try {
-		// If the string already has 'Z' or timezone offset, it's already UTC
-		if (dateTimeString.includes('Z') || dateTimeString.match(/[+-]\d{2}:\d{2}$/)) {
-		  return new Date(dateTimeString);
-		}
-		
-		// Otherwise, treat it as a facility local time and keep as-is
-		// The controller will handle the offset calculation
-		return new Date(dateTimeString);
-	  } catch (error) {
-		console.error('Parse and convert to UTC failed:', error);
-		return null;
-	  }
-	}
-
-  // Format datetime for display in facility timezone
-  static formatForDisplay(utcDateTime, facilityTimezone = this.DEFAULT_TIMEZONE, format = 'en-US') {
-    if (!utcDateTime) return null;
-    
-    try {
-      return new Date(utcDateTime).toLocaleString('en-US', {
+      const date = new Date(dateTime);
+      return date.toLocaleString('en-US', {
         year: 'numeric',
         month: 'short',
         day: 'numeric',
         hour: 'numeric',
         minute: '2-digit',
-        hour12: true,
-        timeZone: facilityTimezone
+        hour12: true
       });
     } catch (error) {
       console.warn('Display format failed:', error);
-      return new Date(utcDateTime).toLocaleString('en-US');
-    }
-  }
-
-  // Get current time in facility timezone
-  static getCurrentTime(facilityTimezone = this.DEFAULT_TIMEZONE) {
-    try {
-      return new Date();
-    } catch (error) {
-      console.warn('Get current time failed:', error);
-      return new Date();
+      return new Date(dateTime).toLocaleString('en-US');
     }
   }
 
   // Calculate duration between two dates in minutes
-  static calculateDurationWithDST(startTime, endTime, facilityTimezone = this.DEFAULT_TIMEZONE) {
+  static calculateDuration(startTime, endTime) {
     try {
       return Math.round((new Date(endTime) - new Date(startTime)) / (1000 * 60));
     } catch (error) {
@@ -90,41 +39,38 @@ class TimezoneUtils {
     }
   }
 
-  // Get timezone offset in minutes
-  static getTimezoneOffset(facilityTimezone = this.DEFAULT_TIMEZONE) {
-    try {
-      return new Date().getTimezoneOffset();
-    } catch (error) {
-      console.warn('Get timezone offset failed:', error);
-      return 0;
-    }
-  }
-
-  // Get timezone abbreviation
-  static getTimezoneAbbreviation(facilityTimezone = this.DEFAULT_TIMEZONE) {
-    try {
-      return new Date().toLocaleString('en-US', {
-        timeZone: facilityTimezone,
-        timeZoneName: 'short'
-      }).split(' ').pop();
-    } catch (error) {
-      console.warn('Get timezone abbreviation failed:', error);
-      return 'UTC';
-    }
+  // Get timezone abbreviation for display
+  static getTimezoneAbbreviation(timezone = this.DEFAULT_TIMEZONE) {
+    const abbreviations = {
+      'America/New_York': 'ET',
+      'America/Chicago': 'CT',
+      'America/Denver': 'MT',
+      'America/Phoenix': 'MST',
+      'America/Los_Angeles': 'PT',
+      'America/Anchorage': 'AKT',
+      'Pacific/Honolulu': 'HST'
+    };
+    
+    return abbreviations[timezone] || 'Local';
   }
 
   // Validate timezone string
   static isValidTimezone(timezone) {
-    try {
-      new Date().toLocaleString('en-US', { timeZone: timezone });
-      return true;
-    } catch (error) {
-      return false;
-    }
+    const validTimezones = [
+      'America/New_York',
+      'America/Chicago',
+      'America/Denver',
+      'America/Phoenix',
+      'America/Los_Angeles',
+      'America/Anchorage',
+      'Pacific/Honolulu'
+    ];
+    
+    return validTimezones.includes(timezone);
   }
 
   // Format time range for display
-  static formatTimeRange(startTime, endTime, facilityTimezone = this.DEFAULT_TIMEZONE) {
+  static formatTimeRange(startTime, endTime) {
     if (!startTime || !endTime) return 'Invalid time range';
     
     try {
@@ -137,15 +83,13 @@ class TimezoneUtils {
         year: 'numeric',
         hour: 'numeric',
         minute: '2-digit',
-        hour12: true,
-        timeZone: facilityTimezone
+        hour12: true
       });
       
       const endStr = end.toLocaleString('en-US', {
         hour: 'numeric',
         minute: '2-digit',
-        hour12: true,
-        timeZone: facilityTimezone
+        hour12: true
       });
       
       return `${startStr} - ${endStr}`;
@@ -155,47 +99,23 @@ class TimezoneUtils {
     }
   }
 
-  // Convert episode times for API response
-  static convertEpisodeTimesForAPI(episode, targetTimezone = null) {
-    if (!episode || !targetTimezone) return episode;
-    
-    try {
-      const convertedEpisode = {
-        ...episode.toJSON ? episode.toJSON() : episode
-      };
-
-      // For now, just return as-is since we're using simplified timezone handling
-      return convertedEpisode;
-    } catch (error) {
-      console.error('Convert episode times failed:', error);
-      return episode;
-    }
-  }
-
   // Get human-readable timezone display name
-  static getTimezoneDisplayName(facilityTimezone = this.DEFAULT_TIMEZONE) {
-    try {
-      const now = new Date();
-      const abbreviation = now.toLocaleString('en-US', {
-        timeZone: facilityTimezone,
-        timeZoneName: 'short'
-      }).split(' ').pop();
-      
-      return abbreviation;
-    } catch (error) {
-      console.warn('Get timezone display name failed:', error);
-      return facilityTimezone;
-    }
-  }
-
-  // Check if time change crosses DST boundary (simplified)
-  static crossesDSTBoundary(originalTime, newTime, facilityTimezone = this.DEFAULT_TIMEZONE) {
-    // Simplified implementation - in production would check actual DST boundaries
-    return false;
+  static getTimezoneDisplayName(timezone = this.DEFAULT_TIMEZONE) {
+    const displayNames = {
+      'America/New_York': 'Eastern Time',
+      'America/Chicago': 'Central Time',
+      'America/Denver': 'Mountain Time',
+      'America/Phoenix': 'Mountain Time (no DST)',
+      'America/Los_Angeles': 'Pacific Time',
+      'America/Anchorage': 'Alaska Time',
+      'Pacific/Honolulu': 'Hawaii Time'
+    };
+    
+    return displayNames[timezone] || timezone;
   }
 
   // Validate that a time is reasonable for ice time booking
-  static validateIceTimeHours(dateTime, facilityTimezone = this.DEFAULT_TIMEZONE) {
+  static validateIceTimeHours(dateTime) {
     try {
       const hour = new Date(dateTime).getHours();
       
@@ -205,8 +125,7 @@ class TimezoneUtils {
       return {
         isValid: isReasonableHour,
         warning: isReasonableHour ? null : 'This time is outside typical arena operating hours',
-        hour,
-        facilityTimezone
+        hour
       };
     } catch (error) {
       console.error('Validate ice time hours failed:', error);
@@ -217,13 +136,40 @@ class TimezoneUtils {
   // Get list of supported timezones for US facilities
   static getSupportedTimezones() {
     return [
-      { value: 'America/New_York', label: 'Eastern Time (ET)', offset: 'UTC-5/-4' },
-      { value: 'America/Chicago', label: 'Central Time (CT)', offset: 'UTC-6/-5' },
-      { value: 'America/Denver', label: 'Mountain Time (MT)', offset: 'UTC-7/-6' },
-      { value: 'America/Los_Angeles', label: 'Pacific Time (PT)', offset: 'UTC-8/-7' },
-      { value: 'America/Anchorage', label: 'Alaska Time (AKT)', offset: 'UTC-9/-8' },
-      { value: 'Pacific/Honolulu', label: 'Hawaii Time (HST)', offset: 'UTC-10' }
+      { value: 'America/New_York', label: 'Eastern Time (ET)', abbr: 'ET' },
+      { value: 'America/Chicago', label: 'Central Time (CT)', abbr: 'CT' },
+      { value: 'America/Denver', label: 'Mountain Time (MT)', abbr: 'MT' },
+      { value: 'America/Phoenix', label: 'Mountain Time - Arizona (MST)', abbr: 'MST' },
+      { value: 'America/Los_Angeles', label: 'Pacific Time (PT)', abbr: 'PT' },
+      { value: 'America/Anchorage', label: 'Alaska Time (AKT)', abbr: 'AKT' },
+      { value: 'Pacific/Honolulu', label: 'Hawaii Time (HST)', abbr: 'HST' }
     ];
+  }
+
+  // Parse datetime string - no conversion needed
+  static parseDateTime(dateTimeString) {
+    if (!dateTimeString) return null;
+    
+    try {
+      const date = new Date(dateTimeString);
+      return isNaN(date.getTime()) ? null : date;
+    } catch (error) {
+      console.error('Parse datetime failed:', error);
+      return null;
+    }
+  }
+
+  // Format date for API - return ISO string
+  static formatForAPI(date) {
+    if (!date) return null;
+    
+    try {
+      const d = new Date(date);
+      return isNaN(d.getTime()) ? null : d.toISOString();
+    } catch (error) {
+      console.error('Format for API failed:', error);
+      return null;
+    }
   }
 }
 

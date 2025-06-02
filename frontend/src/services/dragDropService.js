@@ -1,4 +1,4 @@
-// frontend/src/services/dragDropService.js (Complete implementation)
+// frontend/src/services/dragDropService.js (Simplified - Local Time)
 import calendarService from './calendarService';
 
 class DragDropService {
@@ -263,15 +263,13 @@ class DragDropService {
   isWithinBusinessHours(startTime, endTime, facilitySchedule) {
     if (!facilitySchedule) return true;
     
-    const dayOfWeek = startTime.getDay();
-    const daySchedule = facilitySchedule[dayOfWeek];
-    
-    if (!daySchedule || daySchedule.isClosed) return false;
-    
     const startHour = startTime.getHours() + startTime.getMinutes() / 60;
     const endHour = endTime.getHours() + endTime.getMinutes() / 60;
     
-    return startHour >= daySchedule.openHour && endHour <= daySchedule.closeHour;
+    const businessStart = parseInt(facilitySchedule.start?.split(':')[0] || 6);
+    const businessEnd = parseInt(facilitySchedule.end?.split(':')[0] || 23);
+    
+    return startHour >= businessStart && endHour <= businessEnd;
   }
 
   // Find nearest valid time slot

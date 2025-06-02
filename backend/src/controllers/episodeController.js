@@ -1,4 +1,4 @@
-// backend/src/controllers/episodeController.js (Fixed UTC Handling)
+// backend/src/controllers/episodeController.js (Simplified - Local Time)
 const { Episode, Event, Resource, Facility, Program, Booking, User } = require('../models');
 const { Op } = require('sequelize');
 const sequelize = require('../config/database');
@@ -16,7 +16,7 @@ try {
 }
 
 const episodeController = {
-  // Get episodes - return UTC times for frontend to convert
+  // Get episodes - no timezone conversion needed
   async getEpisodes(req, res) {
     try {
       const { 
@@ -33,14 +33,14 @@ const episodeController = {
       // Build where clause
       const whereClause = {};
       
-      // Date range filter - expect UTC from frontend
+      // Date range filter - times are already in local timezone
       if (start && end) {
-        const utcStartDate = new Date(start);
-        const utcEndDate = new Date(end);
+        const startDate = new Date(start);
+        const endDate = new Date(end);
         
-        if (!isNaN(utcStartDate.getTime()) && !isNaN(utcEndDate.getTime())) {
+        if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
           whereClause.episode_start_date_time = {
-            [Op.between]: [utcStartDate, utcEndDate]
+            [Op.between]: [startDate, endDate]
           };
         }
       }
@@ -122,16 +122,15 @@ const episodeController = {
 
       console.log(`Found ${episodes.length} episodes`);
 
-      // FIXED: Return UTC times - let frontend handle timezone conversion
+      // Format episodes for calendar - times are already in local timezone
       const calendarEvents = episodes.map(episode => {
         const facility = episode.event?.resource?.facility;
         
         return {
           id: episode.episode_id,
           title: episode.episode_title || 'Ice Time',
-          // Return UTC times - frontend will convert for display
-          start: episode.episode_start_date_time.toISOString(),
-          end: episode.episode_end_date_time.toISOString(),
+          start: episode.episode_start_date_time,
+          end: episode.episode_end_date_time,
           resourceId: episode.event.resource_id,
           backgroundColor: getStatusColor(episode.episode_status, req.user?.user_type, episode),
           borderColor: getStatusColor(episode.episode_status, req.user?.user_type, episode),
@@ -175,7 +174,7 @@ const episodeController = {
     }
   },
 
-  // Get single episode - return UTC times
+  // Get single episode
   async getEpisodeById(req, res) {
     try {
       const { id } = req.params;
@@ -252,7 +251,6 @@ const episodeController = {
                            programIds.includes(episode.assigned_to_program_id);
       }
 
-      // FIXED: Return UTC times
       res.json({
         episode: {
           ...episode.toJSON(),
@@ -270,7 +268,7 @@ const episodeController = {
     }
   },
 
-  // Validate episode move - expect UTC times
+  // Validate episode move
   async validateEpisodeMove(req, res) {
     try {
       const { 
@@ -311,11 +309,10 @@ const episodeController = {
         });
       }
 
-      // Times are already UTC from frontend
-      const utcNewStart = new Date(new_start_time);
-      const utcNewEnd = new Date(new_end_time);
+      const newStart = new Date(new_start_time);
+      const newEnd = new Date(new_end_time);
 
-      if (isNaN(utcNewStart.getTime()) || isNaN(utcNewEnd.getTime())) {
+      if (isNaN(newStart.getTime()) || isNaN(newEnd.getTime())) {
         return res.json({
           valid: false,
           conflicts: [{
@@ -328,12 +325,12 @@ const episodeController = {
         });
       }
 
-      // Check conflicts using UTC times
+      // Check conflicts
       const conflictResult = await conflictDetectionService.checkEpisodeConflicts({
         episodeId: episode_id,
         resourceId: episode.event.resource_id,
-        newStartTime: utcNewStart,
-        newEndTime: utcNewEnd,
+        newStartTime: newStart,
+        newEndTime: newEnd,
         facilityId: facility_id || episode.event.resource.facility_id
       });
 
@@ -354,7 +351,7 @@ const episodeController = {
     }
   },
 
-  // Move episode - work with UTC times
+  // Move episode
   async moveEpisode(req, res) {
     console.log('PUT /api/episodes/:id/move called');
     
@@ -407,11 +404,10 @@ const episodeController = {
         });
       }
 
-      // Times are already UTC from frontend
-      const utcNewStartDate = new Date(new_start_time);
-      const utcNewEndDate = new Date(new_end_time);
+      const newStartDate = new Date(new_start_time);
+      const newEndDate = new Date(new_end_time);
 
-      if (isNaN(utcNewStartDate.getTime()) || isNaN(utcNewEndDate.getTime())) {
+      if (isNaN(newStartDate.getTime()) || isNaN(newEndDate.getTime())) {
         await transaction.rollback();
         return res.status(400).json({ 
           message: 'Invalid date format' 
@@ -425,24 +421,24 @@ const episodeController = {
           [Op.or]: [
             {
               episode_start_date_time: {
-                [Op.between]: [utcNewStartDate, utcNewEndDate]
+                [Op.between]: [newStartDate, newEndDate]
               }
             },
             {
               episode_end_date_time: {
-                [Op.between]: [utcNewStartDate, utcNewEndDate]
+                [Op.between]: [newStartDate, newEndDate]
               }
             },
             {
               [Op.and]: [
                 {
                   episode_start_date_time: {
-                    [Op.lte]: utcNewStartDate
+                    [Op.lte]: newStartDate
                   }
                 },
                 {
                   episode_end_date_time: {
-                    [Op.gte]: utcNewEndDate
+                    [Op.gte]: newEndDate
                   }
                 }
               ]
@@ -467,19 +463,19 @@ const episodeController = {
           conflicts: overlappingEpisodes.map(ep => ({
             episodeId: ep.episode_id,
             title: ep.episode_title,
-            start: ep.episode_start_date_time.toISOString(),
-            end: ep.episode_end_date_time.toISOString()
+            start: ep.episode_start_date_time,
+            end: ep.episode_end_date_time
           }))
         });
       }
 
       // Calculate duration
-      const duration = Math.round((utcNewEndDate - utcNewStartDate) / (1000 * 60));
+      const duration = Math.round((newEndDate - newStartDate) / (1000 * 60));
 
-      // Update episode with UTC times
+      // Update episode
       await episode.update({
-        episode_start_date_time: utcNewStartDate,
-        episode_end_date_time: utcNewEndDate,
+        episode_start_date_time: newStartDate,
+        episode_end_date_time: newEndDate,
         episode_duration: duration,
         updated_by: req.user.username
       }, { transaction });
@@ -506,7 +502,6 @@ const episodeController = {
         ]
       });
 
-      // Return UTC times
       res.json({
         message: 'Episode moved successfully',
         episode: {
@@ -527,7 +522,7 @@ const episodeController = {
     }
   },
 
-  // Resize episode - work with UTC times
+  // Resize episode
   async resizeEpisode(req, res) {
     console.log('PUT /api/episodes/:id/resize called');
     
@@ -579,19 +574,18 @@ const episodeController = {
         });
       }
 
-      // Time is already UTC from frontend
-      const utcNewEndDate = new Date(new_end_time);
+      const newEndDate = new Date(new_end_time);
       
-      if (isNaN(utcNewEndDate.getTime())) {
+      if (isNaN(newEndDate.getTime())) {
         await transaction.rollback();
         return res.status(400).json({ 
           message: 'Invalid date format' 
         });
       }
 
-      const utcStartDate = new Date(episode.episode_start_date_time);
+      const startDate = new Date(episode.episode_start_date_time);
       
-      if (utcNewEndDate <= utcStartDate) {
+      if (newEndDate <= startDate) {
         await transaction.rollback();
         return res.status(400).json({ 
           message: 'End time must be after start time' 
@@ -599,7 +593,7 @@ const episodeController = {
       }
 
       // Calculate duration
-      const duration = Math.round((utcNewEndDate - utcStartDate) / (1000 * 60));
+      const duration = Math.round((newEndDate - startDate) / (1000 * 60));
 
       // Validate duration
       if (duration < 30) {
@@ -618,7 +612,7 @@ const episodeController = {
 
       // Update episode
       await episode.update({
-        episode_end_date_time: utcNewEndDate,
+        episode_end_date_time: newEndDate,
         episode_duration: duration,
         updated_by: req.user.username
       }, { transaction });
@@ -645,7 +639,6 @@ const episodeController = {
         ]
       });
 
-      // Return UTC times
       res.json({
         message: 'Episode resized successfully',
         episode: {

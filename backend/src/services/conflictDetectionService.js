@@ -1,4 +1,4 @@
-// backend/src/services/conflictDetectionService.js (Fixed for UTC)
+// backend/src/services/conflictDetectionService.js (Simplified - Local Time)
 const { Episode, Event, Resource, Facility } = require('../models');
 const { Op } = require('sequelize');
 
@@ -18,13 +18,13 @@ class ConflictDetectionService {
 
     try {
       console.log('Checking conflicts for episode:', episodeId, 'resource:', resourceId);
-      console.log('New time range (UTC):', newStartTime, 'to', newEndTime);
+      console.log('New time range:', newStartTime, 'to', newEndTime);
 
-      // Ensure we have Date objects in UTC
-      const utcStartTime = new Date(newStartTime);
-      const utcEndTime = new Date(newEndTime);
+      // Ensure we have Date objects
+      const startTime = new Date(newStartTime);
+      const endTime = new Date(newEndTime);
 
-      if (isNaN(utcStartTime.getTime()) || isNaN(utcEndTime.getTime())) {
+      if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
         conflicts.push({
           type: 'invalid_date',
           severity: 'error',
@@ -36,19 +36,19 @@ class ConflictDetectionService {
 
       // Check for overlapping episodes
       const overlapConflicts = await this.checkOverlappingEpisodes(
-        episodeId, resourceId, utcStartTime, utcEndTime, skipSelf
+        episodeId, resourceId, startTime, endTime, skipSelf
       );
       conflicts.push(...overlapConflicts);
 
       // Business hours check
       const businessHoursResult = await this.checkBusinessHours(
-        facilityId, utcStartTime, utcEndTime
+        facilityId, startTime, endTime
       );
       conflicts.push(...businessHoursResult.conflicts);
       warnings.push(...businessHoursResult.warnings);
 
       // Check for past dates
-      if (utcStartTime < new Date()) {
+      if (startTime < new Date()) {
         conflicts.push({
           type: 'past_date',
           severity: 'error',
@@ -58,7 +58,7 @@ class ConflictDetectionService {
       }
 
       // Duration check
-      const duration = Math.round((utcEndTime - utcStartTime) / (1000 * 60));
+      const duration = Math.round((endTime - startTime) / (1000 * 60));
       if (duration < 30) {
         conflicts.push({
           type: 'duration_too_short',
@@ -177,7 +177,7 @@ class ConflictDetectionService {
           severity: 'error',
           title: 'Schedule Overlap',
           description: `Conflicts with existing ice time: "${episode.episode_title}"`,
-          time: `${episode.episode_start_date_time.toISOString()} - ${episode.episode_end_date_time.toISOString()}`,
+          time: `${episode.episode_start_date_time} - ${episode.episode_end_date_time}`,
           episodeId: episode.episode_id,
           resource: episode.event.resource.resource_name
         });
@@ -196,8 +196,8 @@ class ConflictDetectionService {
     return conflicts;
   }
 
-  // Check business hours
-  async checkBusinessHours(facilityId, utcStartTime, utcEndTime) {
+  // Check business hours (simplified)
+  async checkBusinessHours(facilityId, startTime, endTime) {
     const conflicts = [];
     const warnings = [];
 
@@ -214,19 +214,11 @@ class ConflictDetectionService {
         return { conflicts, warnings };
       }
 
-      // Get facility timezone for business hours check
-      const facilityTimezone = facility.facility_time_zone || 'America/Chicago';
-      
-      // Convert UTC times to facility local time for business hours check
-      // This is a simplified check - in production, use a proper timezone library
-      const facilityStartTime = new Date(utcStartTime.toLocaleString("en-US", {timeZone: facilityTimezone}));
-      const facilityEndTime = new Date(utcEndTime.toLocaleString("en-US", {timeZone: facilityTimezone}));
-
       // Extract hours for business hours check
-      const startHour = facilityStartTime.getHours();
-      const startMinutes = facilityStartTime.getMinutes();
-      const endHour = facilityEndTime.getHours();
-      const endMinutes = facilityEndTime.getMinutes();
+      const startHour = startTime.getHours();
+      const startMinutes = startTime.getMinutes();
+      const endHour = endTime.getHours();
+      const endMinutes = endTime.getMinutes();
 
       // Parse facility hours (default 6 AM to 11 PM)
       const dailyStart = facility.facility_daily_start_time || '06:00:00';
@@ -246,7 +238,7 @@ class ConflictDetectionService {
           type: 'business_hours',
           severity: 'error',
           title: 'Outside Business Hours',
-          description: `Facility hours are ${dailyStart.slice(0, 5)} - ${dailyEnd.slice(0, 5)} (${facilityTimezone})`
+          description: `Facility hours are ${dailyStart.slice(0, 5)} - ${dailyEnd.slice(0, 5)}`
         });
       }
 
