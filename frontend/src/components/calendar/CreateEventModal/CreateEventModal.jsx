@@ -1,4 +1,4 @@
-// frontend/src/components/calendar/CreateEventModal/CreateEventModal.jsx (Fixed with Synchronized Times)
+// frontend/src/components/calendar/CreateEventModal/CreateEventModal.jsx (Updated with smart defaults and click time)
 import React, { useState, useEffect, useMemo } from 'react';
 import { dateUtils } from '../../../utils/dateUtils';
 import './CreateEventModal.css';
@@ -27,11 +27,74 @@ function CreateEventModal({
   // Determine facility timezone
   const facilityTimezone = facility.facility_time_zone || dateUtils.DEFAULT_TIMEZONE;
   
+  // Helper function to calculate smart default times
+  const calculateSmartDefaultTimes = (selectedDateInfo, facilityInfo) => {
+    // If a specific time was clicked on the calendar, use it
+    if (selectedDateInfo?.clickedTime && !selectedDateInfo.allDay) {
+      const clickedDate = new Date(selectedDateInfo.clickedTime);
+      const startTime = dateUtils.extractTimeString(clickedDate, facilityTimezone);
+      
+      // Calculate end time (1 hour later)
+      const endDate = new Date(clickedDate);
+      endDate.setHours(endDate.getHours() + 1);
+      const endTime = dateUtils.extractTimeString(endDate, facilityTimezone);
+      
+      return { startTime, endTime };
+    }
+    
+    // Otherwise, calculate smart defaults based on current time
+    const now = new Date();
+    const selectedDateObj = selectedDateInfo?.date ? new Date(selectedDateInfo.date) : now;
+    
+    // Extract facility hours
+    const facilityStartHour = 6; // 6 AM default
+    const facilityEndHour = 23; // 11 PM default
+    
+    if (facilityInfo?.business_hours) {
+      // Parse facility hours if available
+      // This would need to be implemented based on facility data structure
+    }
+    
+    // Check if selected date is today
+    const isToday = selectedDateObj.toDateString() === now.toDateString();
+    
+    if (isToday) {
+      // For today, find next available hour
+      const currentHour = now.getHours();
+      const currentMinutes = now.getMinutes();
+      
+      // Round up to next hour
+      let startHour = currentMinutes > 0 ? currentHour + 1 : currentHour;
+      
+      // If we're past facility closing time or too close to it
+      if (startHour >= facilityEndHour - 1) {
+        // Default to prime time slot tomorrow
+        return { startTime: '18:00', endTime: '19:00' };
+      }
+      
+      // If we're before facility opening
+      if (startHour < facilityStartHour) {
+        startHour = facilityStartHour;
+      }
+      
+      const startTime = `${String(startHour).padStart(2, '0')}:00`;
+      const endTime = `${String(startHour + 1).padStart(2, '0')}:00`;
+      
+      return { startTime, endTime };
+    } else {
+      // For future dates, default to prime ice time (6 PM)
+      return { startTime: '18:00', endTime: '19:00' };
+    }
+  };
+  
+  // Calculate initial times
+  const defaultTimes = calculateSmartDefaultTimes(selectedDate, facility);
+  
   const [formData, setFormData] = useState({
     resource_id: selectedResource || '',
-    event_date: selectedDate ? dateUtils.extractDateString(selectedDate, facilityTimezone) : '',
-    start_time: '08:00',
-    end_time: '09:00',
+    event_date: selectedDate ? dateUtils.extractDateString(selectedDate?.date || selectedDate, facilityTimezone) : '',
+    start_time: defaultTimes.startTime,
+    end_time: defaultTimes.endTime,
     episode_duration: 60,
     episode_price: 150.00,
     episode_title: '',
@@ -102,9 +165,14 @@ function CreateEventModal({
 
   useEffect(() => {
     if (selectedDate) {
+      // Recalculate smart defaults when selected date changes
+      const newDefaultTimes = calculateSmartDefaultTimes(selectedDate, facility);
+      
       setFormData(prev => ({
         ...prev,
-        event_date: dateUtils.extractDateString(selectedDate, facilityTimezone)
+        event_date: dateUtils.extractDateString(selectedDate?.date || selectedDate, facilityTimezone),
+        start_time: newDefaultTimes.startTime,
+        end_time: newDefaultTimes.endTime
       }));
     }
   }, [selectedDate, facilityTimezone]);
@@ -372,11 +440,14 @@ function CreateEventModal({
   };
 
   const handleClose = () => {
+    // Calculate default times for reset
+    const defaultTimes = calculateSmartDefaultTimes(null, facility);
+    
     setFormData({
       resource_id: '',
       event_date: '',
-      start_time: '08:00',
-      end_time: '09:00',
+      start_time: defaultTimes.startTime,
+      end_time: defaultTimes.endTime,
       episode_duration: 60,
       episode_price: 150.00,
       episode_title: '',
@@ -512,9 +583,14 @@ function CreateEventModal({
                     {computedValues.isPast && (
                       <div className="preview-warning">⚠️ This time is in the past</div>
                     )}
-                    <div className="debug-info" style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
-                      Debug: {formData.event_date} {formData.start_time} - {formData.end_time}
-                    </div>
+                    {process.env.NODE_ENV === 'development' && (
+                      <div className="debug-info" style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+                        Debug: {formData.event_date} {formData.start_time} - {formData.end_time}
+                        {selectedDate?.clickedTime && (
+                          <div>Clicked time: {new Date(selectedDate.clickedTime).toLocaleString()}</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

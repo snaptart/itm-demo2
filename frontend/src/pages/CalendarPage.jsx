@@ -1,4 +1,4 @@
-// frontend/src/pages/CalendarPage.jsx (Fixed with proper drag-drop handling)
+// frontend/src/pages/CalendarPage.jsx (Updated with time capture for modal)
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CalendarView from '../components/calendar/CalendarView/CalendarView';
 import CalendarSidebar from '../components/calendar/CalendarSidebar/CalendarSidebar';
@@ -212,7 +212,12 @@ function CalendarPage() {
       return;
     }
     
-    setSelectedDateForCreate(calendarDate);
+    // For button click, just pass the current date without specific time
+    setSelectedDateForCreate({
+      date: calendarDate,
+      allDay: true,
+      clickedTime: null // No specific time clicked
+    });
     setShowCreateModal(true);
   };
 
@@ -230,14 +235,25 @@ function CalendarPage() {
 
   const handleDateClick = (arg) => {
     if (isAdmin) {
-      setSelectedDateForCreate(arg.date);
+      // Pass the full date/time from the click
+      setSelectedDateForCreate({
+        date: arg.date,
+        allDay: arg.allDay,
+        clickedTime: arg.date // This contains the time if clicked on a time slot
+      });
       setShowCreateModal(true);
     }
   };
 
   const handleDateSelect = (selectInfo) => {
     if (isAdmin) {
-      setSelectedDateForCreate(selectInfo.start);
+      // Pass the selected time range
+      setSelectedDateForCreate({
+        date: selectInfo.start,
+        allDay: selectInfo.allDay,
+        clickedTime: selectInfo.start, // Use the start of the selection
+        endTime: selectInfo.end // Also pass end time for potential future use
+      });
       setShowCreateModal(true);
     }
   };
