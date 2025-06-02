@@ -15,11 +15,15 @@ if (!process.env.DATABASE_URL) {
 const sequelize = new Sequelize(process.env.DATABASE_URL, {
   dialect: 'postgres',
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
+  timezone: '+00:00', // Treat all times as UTC+0 (no conversion)
   dialectOptions: {
     ssl: {
       require: true,
       rejectUnauthorized: false
-    }
+    },
+	useUTC: false, // Don't convert to UTC
+    // Optional: Force PostgreSQL to not interpret timezones
+    timezone: 'Etc/GMT0'
   }
 });
 

@@ -177,15 +177,30 @@ Event.prototype.checkConflictsWith = function(otherEvent) {
 // Hook to update legacy date/time fields
 Event.addHook('beforeSave', (event, options) => {
   if (event.event_start_date_time) {
-    const startDate = new Date(event.event_start_date_time);
-    event.event_start_date = startDate.toISOString().split('T')[0];
-    event.event_start_time = startDate.toTimeString().split(' ')[0];
+    // Extract time directly from the timestamp string
+    const timeMatch = event.event_start_date_time.toString().match(/(\d{2}):(\d{2}):(\d{2})/);
+    if (timeMatch) {
+      event.event_start_time = `${timeMatch[1]}:${timeMatch[2]}:${timeMatch[3]}`;
+    }
+    
+    // Extract date
+    const dateMatch = event.event_start_date_time.toString().match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (dateMatch) {
+      event.event_start_date = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+    }
   }
   
+  // Same for end time
   if (event.event_end_date_time) {
-    const endDate = new Date(event.event_end_date_time);
-    event.event_end_date = endDate.toISOString().split('T')[0];
-    event.event_end_time = endDate.toTimeString().split(' ')[0];
+    const timeMatch = event.event_end_date_time.toString().match(/(\d{2}):(\d{2}):(\d{2})/);
+    if (timeMatch) {
+      event.event_end_time = `${timeMatch[1]}:${timeMatch[2]}:${timeMatch[3]}`;
+    }
+    
+    const dateMatch = event.event_end_date_time.toString().match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (dateMatch) {
+      event.event_end_date = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+    }
   }
 });
 
