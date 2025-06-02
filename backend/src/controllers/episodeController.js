@@ -76,18 +76,18 @@ const episodeController = {
       // Date range filter with UTC storage in mind
       if (start && end) {
         try {
-          // The start/end from frontend are already in facility timezone
-          const facilityStartDate = new Date(start);
-          const facilityEndDate = new Date(end);
+          // The start/end from frontend are already in UTC
+          const utcStartDate = new Date(start);
+          const utcEndDate = new Date(end);
           
-          if (!isNaN(facilityStartDate.getTime()) && !isNaN(facilityEndDate.getTime())) {
-            if (facilityStartDate <= facilityEndDate) {
-              // For database query, we use the dates as-is since we'll convert on output
+          if (!isNaN(utcStartDate.getTime()) && !isNaN(utcEndDate.getTime())) {
+            if (utcStartDate <= utcEndDate) {
+              // Query database with UTC times
               whereClause.episode_start_date_time = {
-                [Op.between]: [facilityStartDate, facilityEndDate]
+                [Op.between]: [utcStartDate, utcEndDate]
               };
               
-              console.log(`Date range filter: ${facilityStartDate.toISOString()} to ${facilityEndDate.toISOString()}`);
+              console.log(`Date range filter (UTC): ${utcStartDate.toISOString()} to ${utcEndDate.toISOString()}`);
             } else {
               return res.status(400).json({ 
                 message: 'Start date must be before end date' 
@@ -194,19 +194,17 @@ const episodeController = {
         const episodeFacilityTimezone = episodeFacility?.facility_time_zone || facilityTimezone;
 
         // CRITICAL FIX: The database stores UTC times, but we need to display them in facility timezone
-        // The episode times from DB are UTC, not facility time
         const utcStartTime = new Date(episode.episode_start_date_time);
         const utcEndTime = new Date(episode.episode_end_date_time);
         
-        // Create facility timezone offset (simplified for now)
-        // In production, use moment-timezone or similar
-        const facilityOffset = getTimezoneOffset(episodeFacilityTimezone);
+        // Get proper timezone offset
+        const facilityOffset = getTimezoneOffset(episodeFacilityTimezone, utcStartTime);
         
         // Adjust UTC times to facility timezone for display
         const facilityStartTime = new Date(utcStartTime.getTime() + facilityOffset);
         const facilityEndTime = new Date(utcEndTime.getTime() + facilityOffset);
 
-        console.log(`Episode ${episode.episode_id}: UTC ${utcStartTime.toISOString()} -> Display ${facilityStartTime.toISOString()} (${episodeFacilityTimezone})`);
+        console.log(`Episode ${episode.episode_id}: UTC ${utcStartTime.toISOString()} -> Display ${facilityStartTime.toISOString()} (${episodeFacilityTimezone}, offset: ${facilityOffset/3600000}h)`);
 
         return {
           id: episode.episode_id,
@@ -342,7 +340,7 @@ const episodeController = {
       const utcStartTime = new Date(episode.episode_start_date_time);
       const utcEndTime = new Date(episode.episode_end_date_time);
       
-      const facilityOffset = getTimezoneOffset(facilityTimezone);
+      const facilityOffset = getTimezoneOffset(facilityTimezone, utcStartTime);
       const facilityStartTime = new Date(utcStartTime.getTime() + facilityOffset);
       const facilityEndTime = new Date(utcEndTime.getTime() + facilityOffset);
 
@@ -422,21 +420,9 @@ const episodeController = {
       const actualFacilityId = facility_id || facility.facility_id;
       const facilityTimezone = facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
 
-		// FIXED: Check if times are already UTC
-		const isUTC = new_start_time.includes('Z') || new_end_time.includes('Z');
-		let utcNewStart, utcNewEnd;
-
-		if (isUTC) {
-		  // Already UTC, use as-is
-		  utcNewStart = new Date(new_start_time);
-		  utcNewEnd = new Date(new_end_time);
-		  console.log('Validation times already in UTC format');
-		} else {
-		  // Apply offset only if not already UTC
-		  const facilityOffset = getTimezoneOffset(facilityTimezone);
-		  utcNewStart = new Date(new Date(new_start_time).getTime() - facilityOffset);
-		  utcNewEnd = new Date(new Date(new_end_time).getTime() - facilityOffset);
-		}
+      // The times from frontend are already in UTC
+      const utcNewStart = new Date(new_start_time);
+      const utcNewEnd = new Date(new_end_time);
 
       if (isNaN(utcNewStart.getTime()) || isNaN(utcNewEnd.getTime())) {
         return res.json({
@@ -537,422 +523,398 @@ const episodeController = {
     }
   },
 
-	// Move episode with proper timezone conversion
-	async moveEpisode(req, res) {
-	  console.log('PUT /api/episodes/:id/move called with params:', req.params, 'body:', req.body);
-	  
-	  let transaction = null;
-	  
-	  try {
-		const { id } = req.params;
-		const { new_start_time, new_end_time, new_duration } = req.body;
+  // Move episode with proper timezone conversion
+  async moveEpisode(req, res) {
+    console.log('PUT /api/episodes/:id/move called with params:', req.params, 'body:', req.body);
+    
+    let transaction = null;
+    
+    try {
+      const { id } = req.params;
+      const { new_start_time, new_end_time, new_duration } = req.body;
 
-		console.log(`Moving episode ${id} to ${new_start_time} - ${new_end_time}`);
+      console.log(`Moving episode ${id} to ${new_start_time} - ${new_end_time}`);
 
-		// Validate required fields
-		if (!new_start_time || !new_end_time) {
-		  return res.status(400).json({ 
-			message: 'New start time and end time are required' 
-		  });
-		}
+      // Validate required fields
+      if (!new_start_time || !new_end_time) {
+        return res.status(400).json({ 
+          message: 'New start time and end time are required' 
+        });
+      }
 
-		// Start transaction
-		transaction = await sequelize.transaction();
+      // Start transaction
+      transaction = await sequelize.transaction();
 
-		const episode = await Episode.findByPk(id, {
-		  include: [{
-			model: Event,
-			as: 'event',
-			include: [{
-			  model: Resource,
-			  as: 'resource',
-			  include: [{
-				model: Facility,
-				as: 'facility'
-			  }]
-			}]
-		  }],
-		  transaction
-		});
+      const episode = await Episode.findByPk(id, {
+        include: [{
+          model: Event,
+          as: 'event',
+          include: [{
+            model: Resource,
+            as: 'resource',
+            include: [{
+              model: Facility,
+              as: 'facility'
+            }]
+          }]
+        }],
+        transaction
+      });
 
-		if (!episode) {
-		  await transaction.rollback();
-		  return res.status(404).json({ 
-			message: 'Episode not found' 
-		  });
-		}
+      if (!episode) {
+        await transaction.rollback();
+        return res.status(404).json({ 
+          message: 'Episode not found' 
+        });
+      }
 
-		const facility = episode.event.resource.facility;
-		const facilityTimezone = facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
+      const facility = episode.event.resource.facility;
+      const facilityTimezone = facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
 
-		console.log(`Using facility timezone: ${facilityTimezone} for episode move`);
+      console.log(`Using facility timezone: ${facilityTimezone} for episode move`);
 
-		// FIXED: The incoming times are already in UTC from the frontend
-		// Check if times are in ISO/UTC format
-		const isUTC = new_start_time.includes('Z') || new_end_time.includes('Z');
-		let utcNewStartDate, utcNewEndDate;
+      // The incoming times are already in UTC from the frontend
+      const utcNewStartDate = new Date(new_start_time);
+      const utcNewEndDate = new Date(new_end_time);
 
-		if (isUTC) {
-		  // Already UTC, use as-is
-		  utcNewStartDate = new Date(new_start_time);
-		  utcNewEndDate = new Date(new_end_time);
-		  console.log('Move times already in UTC format');
-		} else {
-		  // Apply offset only if not already UTC
-		  const facilityOffset = getTimezoneOffset(facilityTimezone);
-		  utcNewStartDate = new Date(new Date(new_start_time).getTime() - facilityOffset);
-		  utcNewEndDate = new Date(new Date(new_end_time).getTime() - facilityOffset);
-		}
+      if (isNaN(utcNewStartDate.getTime()) || isNaN(utcNewEndDate.getTime())) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Invalid date format' 
+        });
+      }
 
-		if (isNaN(utcNewStartDate.getTime()) || isNaN(utcNewEndDate.getTime())) {
-		  await transaction.rollback();
-		  return res.status(400).json({ 
-			message: 'Invalid date format' 
-		  });
-		}
+      if (utcNewStartDate >= utcNewEndDate) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'End time must be after start time' 
+        });
+      }
 
-		if (utcNewStartDate >= utcNewEndDate) {
-		  await transaction.rollback();
-		  return res.status(400).json({ 
-			message: 'End time must be after start time' 
-		  });
-		}
+      console.log(`Found episode: ${episode.episode_title}, current UTC time: ${episode.episode_start_date_time} - ${episode.episode_end_date_time}`);
 
-		console.log(`Found episode: ${episode.episode_title}, current UTC time: ${episode.episode_start_date_time} - ${episode.episode_end_date_time}`);
+      // Check permission
+      if (req.user.user_type !== 'admin') {
+        await transaction.rollback();
+        return res.status(403).json({ 
+          message: 'Only administrators can move ice time slots' 
+        });
+      }
 
-		// Check permission
-		if (req.user.user_type !== 'admin') {
-		  await transaction.rollback();
-		  return res.status(403).json({ 
-			message: 'Only administrators can move ice time slots' 
-		  });
-		}
+      // Calculate duration
+      let duration = new_duration;
+      if (!duration) {
+        duration = Math.round((utcNewEndDate.getTime() - utcNewStartDate.getTime()) / (1000 * 60));
+      }
 
-		// Calculate duration
-		let duration = new_duration;
-		if (!duration) {
-		  duration = Math.round((utcNewEndDate.getTime() - utcNewStartDate.getTime()) / (1000 * 60));
-		}
+      console.log(`Calculated duration: ${duration} minutes`);
 
-		console.log(`Calculated duration: ${duration} minutes`);
+      // Basic conflict check using UTC times for database comparison
+      const overlappingEpisodes = await Episode.findAll({
+        where: {
+          episode_id: { [Op.ne]: id },
+          [Op.or]: [
+            {
+              episode_start_date_time: {
+                [Op.between]: [utcNewStartDate, utcNewEndDate]
+              }
+            },
+            {
+              episode_end_date_time: {
+                [Op.between]: [utcNewStartDate, utcNewEndDate]
+              }
+            },
+            {
+              [Op.and]: [
+                {
+                  episode_start_date_time: {
+                    [Op.lte]: utcNewStartDate
+                  }
+                },
+                {
+                  episode_end_date_time: {
+                    [Op.gte]: utcNewEndDate
+                  }
+                }
+              ]
+            },
+            {
+              [Op.and]: [
+                {
+                  episode_start_date_time: {
+                    [Op.gte]: utcNewStartDate
+                  }
+                },
+                {
+                  episode_end_date_time: {
+                    [Op.lte]: utcNewEndDate
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        include: [{
+          model: Event,
+          as: 'event',
+          where: {
+            resource_id: episode.event.resource_id
+          },
+          required: true
+        }],
+        transaction
+      });
 
-		// Basic conflict check using UTC times for database comparison
-		const overlappingEpisodes = await Episode.findAll({
-		  where: {
-			episode_id: { [Op.ne]: id },
-			[Op.or]: [
-			  {
-				episode_start_date_time: {
-				  [Op.between]: [utcNewStartDate, utcNewEndDate]
-				}
-			  },
-			  {
-				episode_end_date_time: {
-				  [Op.between]: [utcNewStartDate, utcNewEndDate]
-				}
-			  },
-			  {
-				[Op.and]: [
-				  {
-					episode_start_date_time: {
-					  [Op.lte]: utcNewStartDate
-					}
-				  },
-				  {
-					episode_end_date_time: {
-					  [Op.gte]: utcNewEndDate
-					}
-				  }
-				]
-			  },
-			  {
-				[Op.and]: [
-				  {
-					episode_start_date_time: {
-					  [Op.gte]: utcNewStartDate
-					}
-				  },
-				  {
-					episode_end_date_time: {
-					  [Op.lte]: utcNewEndDate
-					}
-				  }
-				]
-			  }
-			]
-		  },
-		  include: [{
-			model: Event,
-			as: 'event',
-			where: {
-			  resource_id: episode.event.resource_id
-			},
-			required: true
-		  }],
-		  transaction
-		});
+      if (overlappingEpisodes.length > 0) {
+        await transaction.rollback();
+        
+        // Convert conflict times to facility timezone for response
+        const facilityOffset = getTimezoneOffset(facilityTimezone, new Date());
+        const conflicts = overlappingEpisodes.map(ep => {
+          const conflictUtcStart = new Date(ep.episode_start_date_time);
+          const conflictUtcEnd = new Date(ep.episode_end_date_time);
+          const conflictFacilityStart = new Date(conflictUtcStart.getTime() + facilityOffset);
+          const conflictFacilityEnd = new Date(conflictUtcEnd.getTime() + facilityOffset);
+          
+          return {
+            episodeId: ep.episode_id,
+            title: ep.episode_title,
+            start: conflictFacilityStart.toISOString(),
+            end: conflictFacilityEnd.toISOString()
+          };
+        });
 
-		if (overlappingEpisodes.length > 0) {
-		  await transaction.rollback();
-		  
-		  // Convert conflict times to facility timezone for response
-		  const facilityOffset = getTimezoneOffset(facilityTimezone);
-		  const conflicts = overlappingEpisodes.map(ep => {
-			const conflictUtcStart = new Date(ep.episode_start_date_time);
-			const conflictUtcEnd = new Date(ep.episode_end_date_time);
-			const conflictFacilityStart = new Date(conflictUtcStart.getTime() + facilityOffset);
-			const conflictFacilityEnd = new Date(conflictUtcEnd.getTime() + facilityOffset);
-			
-			return {
-			  episodeId: ep.episode_id,
-			  title: ep.episode_title,
-			  start: conflictFacilityStart.toISOString(),
-			  end: conflictFacilityEnd.toISOString()
-			};
-		  });
+        return res.status(400).json({
+          message: 'Move would create schedule conflicts',
+          conflicts,
+          facilityTimezone
+        });
+      }
 
-		  return res.status(400).json({
-			message: 'Move would create schedule conflicts',
-			conflicts,
-			facilityTimezone
-		  });
-		}
+      // Update episode with UTC times for storage
+      await episode.update({
+        episode_start_date_time: utcNewStartDate,
+        episode_end_date_time: utcNewEndDate,
+        episode_duration: duration,
+        updated_by: req.user.username
+      }, { transaction });
 
-		// Update episode with UTC times for storage
-		await episode.update({
-		  episode_start_date_time: utcNewStartDate,
-		  episode_end_date_time: utcNewEndDate,
-		  episode_duration: duration,
-		  updated_by: req.user.username
-		}, { transaction });
+      await transaction.commit();
 
-		await transaction.commit();
+      console.log(`Successfully moved episode ${id} to UTC: ${utcNewStartDate.toISOString()} - ${utcNewEndDate.toISOString()}`);
 
-		console.log(`Successfully moved episode ${id} to UTC: ${utcNewStartDate.toISOString()} - ${utcNewEndDate.toISOString()}`);
+      // Reload with associations
+      const updatedEpisode = await Episode.findByPk(id, {
+        include: [
+          {
+            model: Event,
+            as: 'event',
+            include: [{
+              model: Resource,
+              as: 'resource',
+              include: [{
+                model: Facility,
+                as: 'facility'
+              }]
+            }]
+          },
+          {
+            model: Program,
+            as: 'program'
+          },
+          {
+            model: Program,
+            as: 'assignedProgram'
+          }
+        ]
+      });
 
-		// Reload with associations
-		const updatedEpisode = await Episode.findByPk(id, {
-		  include: [
-			{
-			  model: Event,
-			  as: 'event',
-			  include: [{
-				model: Resource,
-				as: 'resource',
-				include: [{
-				  model: Facility,
-				  as: 'facility'
-				}]
-			  }]
-			},
-			{
-			  model: Program,
-			  as: 'program'
-			},
-			{
-			  model: Program,
-			  as: 'assignedProgram'
-			}
-		  ]
-		});
+      // Convert times back to facility timezone for response
+      const facilityOffset = getTimezoneOffset(facilityTimezone, utcNewStartDate);
+      const responseUtcStart = new Date(updatedEpisode.episode_start_date_time);
+      const responseUtcEnd = new Date(updatedEpisode.episode_end_date_time);
+      const responseFacilityStart = new Date(responseUtcStart.getTime() + facilityOffset);
+      const responseFacilityEnd = new Date(responseUtcEnd.getTime() + facilityOffset);
 
-		// Convert times back to facility timezone for response
-		const facilityOffset = getTimezoneOffset(facilityTimezone);
-		const responseUtcStart = new Date(updatedEpisode.episode_start_date_time);
-		const responseUtcEnd = new Date(updatedEpisode.episode_end_date_time);
-		const responseFacilityStart = new Date(responseUtcStart.getTime() + facilityOffset);
-		const responseFacilityEnd = new Date(responseUtcEnd.getTime() + facilityOffset);
+      res.json({
+        message: 'Episode moved successfully',
+        episode: {
+          ...updatedEpisode.toJSON(),
+          // Override with facility times for frontend consumption
+          episode_start_date_time: responseFacilityStart.toISOString(),
+          episode_end_date_time: responseFacilityEnd.toISOString()
+        },
+        facilityTimezone
+      });
 
-		res.json({
-		  message: 'Episode moved successfully',
-		  episode: {
-			...updatedEpisode.toJSON(),
-			// Override with facility times for frontend consumption
-			episode_start_date_time: responseFacilityStart.toISOString(),
-			episode_end_date_time: responseFacilityEnd.toISOString()
-		  },
-		  facilityTimezone
-		});
+    } catch (error) {
+      // Only rollback if transaction exists and hasn't been committed/rolled back
+      if (transaction && !transaction.finished) {
+        await transaction.rollback();
+      }
+      console.error('PUT /api/episodes/:id/move error:', error);
+      res.status(500).json({ 
+        message: 'An error occurred while moving the episode',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
+  },
 
-	  } catch (error) {
-		// Only rollback if transaction exists and hasn't been committed/rolled back
-		if (transaction && !transaction.finished) {
-		  await transaction.rollback();
-		}
-		console.error('PUT /api/episodes/:id/move error:', error);
-		res.status(500).json({ 
-		  message: 'An error occurred while moving the episode',
-		  error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-		});
-	  }
-	},
+  // Resize episode with proper timezone conversion
+  async resizeEpisode(req, res) {
+    console.log('PUT /api/episodes/:id/resize called with params:', req.params, 'body:', req.body);
+    
+    let transaction = null;
+    
+    try {
+      const { id } = req.params;
+      const { new_end_time, new_duration } = req.body;
 
-	// Resize episode with proper timezone conversion
-	async resizeEpisode(req, res) {
-	  console.log('PUT /api/episodes/:id/resize called with params:', req.params, 'body:', req.body);
-	  
-	  let transaction = null;
-	  
-	  try {
-		const { id } = req.params;
-		const { new_end_time, new_duration } = req.body;
+      console.log(`Resizing episode ${id} to end at ${new_end_time}`);
 
-		console.log(`Resizing episode ${id} to end at ${new_end_time}`);
+      if (!new_end_time) {
+        return res.status(400).json({ 
+          message: 'New end time is required' 
+        });
+      }
 
-		if (!new_end_time) {
-		  return res.status(400).json({ 
-			message: 'New end time is required' 
-		  });
-		}
+      // Start transaction
+      transaction = await sequelize.transaction();
 
-		// Start transaction
-		transaction = await sequelize.transaction();
+      const episode = await Episode.findByPk(id, {
+        include: [{
+          model: Event,
+          as: 'event',
+          include: [{
+            model: Resource,
+            as: 'resource',
+            include: [{
+              model: Facility,
+              as: 'facility'
+            }]
+          }]
+        }],
+        transaction
+      });
 
-		const episode = await Episode.findByPk(id, {
-		  include: [{
-			model: Event,
-			as: 'event',
-			include: [{
-			  model: Resource,
-			  as: 'resource',
-			  include: [{
-				model: Facility,
-				as: 'facility'
-			  }]
-			}]
-		  }],
-		  transaction
-		});
+      if (!episode) {
+        await transaction.rollback();
+        return res.status(404).json({ 
+          message: 'Episode not found' 
+        });
+      }
 
-		if (!episode) {
-		  await transaction.rollback();
-		  return res.status(404).json({ 
-			message: 'Episode not found' 
-		  });
-		}
+      const facility = episode.event.resource.facility;
+      const facilityTimezone = facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
 
-		const facility = episode.event.resource.facility;
-		const facilityTimezone = facility.facility_time_zone || TimezoneUtils.DEFAULT_TIMEZONE;
+      // The incoming time is already UTC
+      const utcNewEndDate = new Date(new_end_time);
+      
+      if (isNaN(utcNewEndDate.getTime())) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Invalid date format' 
+        });
+      }
 
-		// FIXED: Check if the incoming time is already UTC
-		const isUTC = new_end_time.includes('Z');
-		let utcNewEndDate;
+      // Use stored UTC start time for comparison
+      const utcStartDate = new Date(episode.episode_start_date_time);
+      
+      if (utcNewEndDate <= utcStartDate) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'End time must be after start time' 
+        });
+      }
 
-		if (isUTC) {
-		  // Already UTC, use as-is
-		  utcNewEndDate = new Date(new_end_time);
-		  console.log('Resize time already in UTC format');
-		} else {
-		  // Apply offset only if not already UTC
-		  const facilityOffset = getTimezoneOffset(facilityTimezone);
-		  utcNewEndDate = new Date(new Date(new_end_time).getTime() - facilityOffset);
-		}
-		
-		if (isNaN(utcNewEndDate.getTime())) {
-		  await transaction.rollback();
-		  return res.status(400).json({ 
-			message: 'Invalid date format' 
-		  });
-		}
+      // Check permission
+      if (req.user.user_type !== 'admin') {
+        await transaction.rollback();
+        return res.status(403).json({ 
+          message: 'Only administrators can resize ice time slots' 
+        });
+      }
 
-		// Use stored UTC start time for comparison
-		const utcStartDate = new Date(episode.episode_start_date_time);
-		
-		if (utcNewEndDate <= utcStartDate) {
-		  await transaction.rollback();
-		  return res.status(400).json({ 
-			message: 'End time must be after start time' 
-		  });
-		}
+      // Calculate duration
+      let duration = new_duration;
+      if (!duration) {
+        duration = Math.round((utcNewEndDate.getTime() - utcStartDate.getTime()) / (1000 * 60));
+      }
 
-		// Check permission
-		if (req.user.user_type !== 'admin') {
-		  await transaction.rollback();
-		  return res.status(403).json({ 
-			message: 'Only administrators can resize ice time slots' 
-		  });
-		}
+      // Basic validation - check duration limits
+      if (duration < 30) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Duration must be at least 30 minutes' 
+        });
+      }
 
-		// Calculate duration
-		let duration = new_duration;
-		if (!duration) {
-		  duration = Math.round((utcNewEndDate.getTime() - utcStartDate.getTime()) / (1000 * 60));
-		}
+      if (duration > 480) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          message: 'Duration cannot exceed 8 hours' 
+        });
+      }
 
-		// Basic validation - check duration limits
-		if (duration < 30) {
-		  await transaction.rollback();
-		  return res.status(400).json({ 
-			message: 'Duration must be at least 30 minutes' 
-		  });
-		}
+      // Update episode with UTC end time
+      await episode.update({
+        episode_end_date_time: utcNewEndDate,
+        episode_duration: duration,
+        updated_by: req.user.username
+      }, { transaction });
 
-		if (duration > 480) {
-		  await transaction.rollback();
-		  return res.status(400).json({ 
-			message: 'Duration cannot exceed 8 hours' 
-		  });
-		}
+      await transaction.commit();
 
-		// Update episode with UTC end time
-		await episode.update({
-		  episode_end_date_time: utcNewEndDate,
-		  episode_duration: duration,
-		  updated_by: req.user.username
-		}, { transaction });
+      console.log(`Successfully resized episode ${id} to ${duration} minutes, UTC end: ${utcNewEndDate.toISOString()}`);
 
-		await transaction.commit();
+      // Reload with associations
+      const updatedEpisode = await Episode.findByPk(id, {
+        include: [
+          {
+            model: Event,
+            as: 'event',
+            include: [{
+              model: Resource,
+              as: 'resource',
+              include: [{
+                model: Facility,
+                as: 'facility'
+              }]
+            }]
+          }
+        ]
+      });
 
-		console.log(`Successfully resized episode ${id} to ${duration} minutes, UTC end: ${utcNewEndDate.toISOString()}`);
+      // Convert times back to facility timezone for response
+      const facilityOffset = getTimezoneOffset(facilityTimezone, utcStartDate);
+      const responseUtcStart = new Date(updatedEpisode.episode_start_date_time);
+      const responseUtcEnd = new Date(updatedEpisode.episode_end_date_time);
+      const responseFacilityStart = new Date(responseUtcStart.getTime() + facilityOffset);
+      const responseFacilityEnd = new Date(responseUtcEnd.getTime() + facilityOffset);
 
-		// Reload with associations
-		const updatedEpisode = await Episode.findByPk(id, {
-		  include: [
-			{
-			  model: Event,
-			  as: 'event',
-			  include: [{
-				model: Resource,
-				as: 'resource',
-				include: [{
-				  model: Facility,
-				  as: 'facility'
-				}]
-			  }]
-			}
-		  ]
-		});
+      res.json({
+        message: 'Episode resized successfully',
+        episode: {
+          ...updatedEpisode.toJSON(),
+          // Override with facility times for frontend consumption
+          episode_start_date_time: responseFacilityStart.toISOString(),
+          episode_end_date_time: responseFacilityEnd.toISOString()
+        },
+        facilityTimezone
+      });
 
-		// Convert times back to facility timezone for response
-		const facilityOffset = getTimezoneOffset(facilityTimezone);
-		const responseUtcStart = new Date(updatedEpisode.episode_start_date_time);
-		const responseUtcEnd = new Date(updatedEpisode.episode_end_date_time);
-		const responseFacilityStart = new Date(responseUtcStart.getTime() + facilityOffset);
-		const responseFacilityEnd = new Date(responseUtcEnd.getTime() + facilityOffset);
-
-		res.json({
-		  message: 'Episode resized successfully',
-		  episode: {
-			...updatedEpisode.toJSON(),
-			// Override with facility times for frontend consumption
-			episode_start_date_time: responseFacilityStart.toISOString(),
-			episode_end_date_time: responseFacilityEnd.toISOString()
-		  },
-		  facilityTimezone
-		});
-
-	  } catch (error) {
-		// Only rollback if transaction exists and hasn't been committed/rolled back
-		if (transaction && !transaction.finished) {
-		  await transaction.rollback();
-		}
-		console.error('PUT /api/episodes/:id/resize error:', error);
-		res.status(500).json({ 
-		  message: 'An error occurred while resizing the episode',
-		  error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-		});
-	  }
-	},
+    } catch (error) {
+      // Only rollback if transaction exists and hasn't been committed/rolled back
+      if (transaction && !transaction.finished) {
+        await transaction.rollback();
+      }
+      console.error('PUT /api/episodes/:id/resize error:', error);
+      res.status(500).json({ 
+        message: 'An error occurred while resizing the episode',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
+  },
 
   // Get calendar resources (unchanged)
   async getCalendarResources(req, res) {
@@ -1068,26 +1030,54 @@ function canEditEpisode(episode, user) {
   return true;
 }
 
-// CRITICAL: Simplified timezone offset calculation
-// In production, use moment-timezone or date-fns-tz for accurate timezone handling
-function getTimezoneOffset(timezone) {
-  // For now, return 0 offset since the frontend is already sending UTC times
-  // This prevents double conversion
-  console.log(`Timezone offset requested for ${timezone}, returning 0 (times already in UTC)`);
-  return 0;
+// FIXED: Proper timezone offset calculation with DST support
+function getTimezoneOffset(timezone, date = new Date()) {
+  // This function calculates the offset in milliseconds between UTC and the given timezone
+  // Positive offset means the timezone is ahead of UTC (rare in US)
+  // Negative offset means the timezone is behind UTC (common in US)
   
-  /* Original offset code - kept for reference
-  const offsets = {
-    'America/New_York': -5 * 60 * 60 * 1000,     // EST/EDT
-    'America/Chicago': -6 * 60 * 60 * 1000,      // CST/CDT
-    'America/Denver': -7 * 60 * 60 * 1000,       // MST/MDT
-    'America/Los_Angeles': -8 * 60 * 60 * 1000,  // PST/PDT
-    'America/Anchorage': -9 * 60 * 60 * 1000,    // AKST/AKDT
-    'Pacific/Honolulu': -10 * 60 * 60 * 1000     // HST
+  const baseDate = date || new Date();
+  
+  // Check if we're in DST period (rough approximation for US)
+  // DST in US: Second Sunday in March to first Sunday in November
+  const isDST = isDaylightSavingTime(baseDate);
+  
+  // US timezone offsets in milliseconds
+  const timezoneOffsets = {
+    'America/New_York': isDST ? -4 * 60 * 60 * 1000 : -5 * 60 * 60 * 1000,     // EST/EDT
+    'America/Chicago': isDST ? -5 * 60 * 60 * 1000 : -6 * 60 * 60 * 1000,      // CST/CDT
+    'America/Denver': isDST ? -6 * 60 * 60 * 1000 : -7 * 60 * 60 * 1000,       // MST/MDT
+    'America/Los_Angeles': isDST ? -7 * 60 * 60 * 1000 : -8 * 60 * 60 * 1000,  // PST/PDT
+    'America/Phoenix': -7 * 60 * 60 * 1000,                                      // MST (no DST)
+    'America/Anchorage': isDST ? -8 * 60 * 60 * 1000 : -9 * 60 * 60 * 1000,    // AKST/AKDT
+    'Pacific/Honolulu': -10 * 60 * 60 * 1000                                    // HST (no DST)
   };
   
-  return offsets[timezone] || offsets['America/Chicago'];
-  */
+  const offset = timezoneOffsets[timezone] || timezoneOffsets['America/Chicago'];
+  
+  console.log(`Timezone offset for ${timezone} on ${baseDate.toISOString()}: ${offset/3600000}h (DST: ${isDST})`);
+  
+  return offset;
+}
+
+// Helper function to determine if a date is in DST (US rules)
+function isDaylightSavingTime(date) {
+  const year = date.getFullYear();
+  
+  // Find second Sunday in March
+  const march = new Date(year, 2, 1); // March 1st
+  const daysUntilSunday = (7 - march.getDay()) % 7;
+  const firstSunday = new Date(year, 2, 1 + daysUntilSunday);
+  const secondSunday = new Date(year, 2, firstSunday.getDate() + 7);
+  const dstStart = new Date(year, 2, secondSunday.getDate(), 2); // 2 AM
+  
+  // Find first Sunday in November
+  const november = new Date(year, 10, 1); // November 1st
+  const daysUntilSundayNov = (7 - november.getDay()) % 7;
+  const firstSundayNov = new Date(year, 10, 1 + daysUntilSundayNov);
+  const dstEnd = new Date(year, 10, firstSundayNov.getDate(), 2); // 2 AM
+  
+  return date >= dstStart && date < dstEnd;
 }
 
 module.exports = episodeController;
