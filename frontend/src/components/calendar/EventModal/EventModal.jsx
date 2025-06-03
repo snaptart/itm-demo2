@@ -1,7 +1,8 @@
-// frontend/src/components/calendar/EventModal/EventModal.jsx (Simplified - Local Time)
+// frontend/src/components/calendar/EventModal/EventModal.jsx - Enhanced Version
 import React, { useState, useEffect } from 'react';
 import ConfirmationModal from '../../common/ConfirmationModal/ConfirmationModal';
 import LoadingSpinner from '../../common/LoadingSpinner/LoadingSpinner';
+import programService from '../../../services/programService';
 import { dateUtils } from '../../../utils/dateUtils';
 import './EventModal.css';
 
@@ -20,6 +21,8 @@ function EventModal({
   const [isEditing, setIsEditing] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [episodeDetails, setEpisodeDetails] = useState(null);
+  const [programs, setPrograms] = useState([]);
+  const [loadingPrograms, setLoadingPrograms] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   
@@ -28,7 +31,8 @@ function EventModal({
     episode_title: '',
     episode_description: '',
     episode_price: '',
-    episode_status: 'available'
+    episode_status: 'available',
+    assigned_to_program_id: ''
   });
 
   // Form validation state
@@ -39,6 +43,12 @@ function EventModal({
       loadEpisodeDetails();
     }
   }, [event]);
+
+  useEffect(() => {
+    if (isAdmin && isEditing) {
+      loadPrograms();
+    }
+  }, [isAdmin, isEditing]);
 
   const loadEpisodeDetails = async () => {
     if (!calendarService || !event?.episode_id) {
@@ -58,7 +68,8 @@ function EventModal({
           episode_title: result.data.episode.episode_title || '',
           episode_description: result.data.episode.episode_description || '',
           episode_price: result.data.episode.episode_price || '',
-          episode_status: result.data.episode.episode_status || 'available'
+          episode_status: result.data.episode.episode_status || 'available',
+          assigned_to_program_id: result.data.episode.assigned_to_program_id || ''
         });
       } else {
         setError(result.error || 'Failed to load episode details');
@@ -68,6 +79,26 @@ function EventModal({
       console.error('Load episode details error:', err);
     } finally {
       setLoadingDetails(false);
+    }
+  };
+
+  const loadPrograms = async () => {
+    try {
+      setLoadingPrograms(true);
+      const result = await programService.getPrograms({ 
+        active_only: true,
+        include_type: true 
+      });
+      
+      if (result.success) {
+        setPrograms(result.data.programs);
+      } else {
+        console.error('Failed to load programs:', result.error);
+      }
+    } catch (err) {
+      console.error('Load programs error:', err);
+    } finally {
+      setLoadingPrograms(false);
     }
   };
 
@@ -100,7 +131,8 @@ function EventModal({
         episode_title: episodeDetails.episode_title || '',
         episode_description: episodeDetails.episode_description || '',
         episode_price: episodeDetails.episode_price || '',
-        episode_status: episodeDetails.episode_status || 'available'
+        episode_status: episodeDetails.episode_status || 'available',
+        assigned_to_program_id: episodeDetails.assigned_to_program_id || ''
       });
     }
   };
@@ -155,7 +187,8 @@ function EventModal({
         episode_title: editData.episode_title.trim(),
         episode_description: editData.episode_description.trim(),
         episode_price: editData.episode_price === '' ? null : parseFloat(editData.episode_price),
-        episode_status: editData.episode_status
+        episode_status: editData.episode_status,
+        assigned_to_program_id: editData.assigned_to_program_id || null
       };
 
       const result = await calendarService.updateEpisode(episodeDetails.episode_id, updateData);
@@ -350,6 +383,27 @@ function EventModal({
                         <option value="maintenance">Maintenance</option>
                         <option value="cancelled">Cancelled</option>
                       </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Assign to Program</label>
+                      <select
+                        name="assigned_to_program_id"
+                        value={editData.assigned_to_program_id}
+                        onChange={handleInputChange}
+                        disabled={isSaving || loadingPrograms}
+                      >
+                        <option value="">No program assigned</option>
+                        {programs.map(program => (
+                          <option key={program.program_id} value={program.program_id}>
+                            {program.program_name}
+                            {program.programType && ` (${program.programType.program_type_name})`}
+                          </option>
+                        ))}
+                      </select>
+                      {loadingPrograms && (
+                        <small className="loading-text">Loading programs...</small>
+                      )}
                     </div>
                   </div>
                 ) : (

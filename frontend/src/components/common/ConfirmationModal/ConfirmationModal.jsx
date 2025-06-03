@@ -1,15 +1,16 @@
+// frontend/src/components/common/ConfirmationModal/ConfirmationModal.jsx
 import React from 'react';
 import './ConfirmationModal.css';
 
-function ConfirmationModal({ 
-  isOpen, 
-  onClose, 
-  onConfirm, 
-  title, 
-  message, 
+function ConfirmationModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  title = 'Confirm Action',
+  message = 'Are you sure you want to proceed?',
   confirmText = 'Confirm',
   cancelText = 'Cancel',
-  type = 'warning',
+  type = 'default', // default, danger, warning
   loading = false
 }) {
   if (!isOpen) return null;
@@ -29,16 +30,23 @@ function ConfirmationModal({
   return (
     <div className="confirmation-overlay" onClick={handleClose}>
       <div className="confirmation-modal" onClick={(e) => e.stopPropagation()}>
-        <div className={`confirmation-icon ${type}`}>
-          {type === 'warning' && '⚠️'}
-          {type === 'danger' && '🗑️'}
-          {type === 'info' && 'ℹ️'}
+        <div className="confirmation-header">
+          <h3>{title}</h3>
+          <button 
+            className="confirmation-close" 
+            onClick={handleClose}
+            disabled={loading}
+            aria-label="Close"
+          >
+            ×
+          </button>
         </div>
         
-        <h3 className="confirmation-title">{title}</h3>
-        <p className="confirmation-message">{message}</p>
+        <div className="confirmation-body">
+          <p>{message}</p>
+        </div>
         
-        <div className="confirmation-actions">
+        <div className="confirmation-footer">
           <button 
             className="btn btn-secondary" 
             onClick={handleClose}
@@ -51,7 +59,14 @@ function ConfirmationModal({
             onClick={handleConfirm}
             disabled={loading}
           >
-            {loading ? 'Processing...' : confirmText}
+            {loading ? (
+              <>
+                <span className="btn-spinner"></span>
+                Processing...
+              </>
+            ) : (
+              confirmText
+            )}
           </button>
         </div>
       </div>

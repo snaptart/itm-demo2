@@ -1,15 +1,11 @@
+// frontend/src/components/common/LoadingSpinner/LoadingSpinner.jsx
 import React from 'react';
 import './LoadingSpinner.css';
 
-function LoadingSpinner({ size = 'medium', message = 'Loading...' }) {
+function LoadingSpinner({ size = 'medium', message = '' }) {
   return (
     <div className={`loading-spinner-container ${size}`}>
-      <div className="loading-spinner">
-        <div className="spinner-ring"></div>
-        <div className="spinner-ring"></div>
-        <div className="spinner-ring"></div>
-        <div className="spinner-ring"></div>
-      </div>
+      <div className="loading-spinner"></div>
       {message && <p className="loading-message">{message}</p>}
     </div>
   );

@@ -1,3 +1,4 @@
+/* frontend/src/components/calendar/EventModal/EventModal.css - Enhanced Version */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -59,6 +60,11 @@
   color: #2d3748;
 }
 
+.modal-close:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .modal-error {
   margin: 16px 24px 0;
   padding: 12px 16px;
@@ -102,6 +108,7 @@
   font-size: 14px;
   color: #2d3748;
   transition: border-color 0.2s;
+  background: white;
 }
 
 .form-group input:focus,
@@ -112,9 +119,38 @@
   box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
 }
 
+.form-group input:disabled,
+.form-group textarea:disabled,
+.form-group select:disabled {
+  background-color: #f7fafc;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .form-group textarea {
   resize: vertical;
   min-height: 80px;
+  font-family: inherit;
+}
+
+.form-group input.error,
+.form-group textarea.error {
+  border-color: #fc8181;
+}
+
+.field-error {
+  display: block;
+  color: #e53e3e;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.loading-text {
+  display: block;
+  color: #718096;
+  font-size: 12px;
+  margin-top: 4px;
+  font-style: italic;
 }
 
 /* Event Details Styles */
@@ -202,12 +238,17 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 0;
+  padding: 12px 0;
   border-bottom: 1px solid #f7fafc;
 }
 
 .booking-item:last-child {
   border-bottom: none;
+}
+
+.booking-item small {
+  color: #718096;
+  font-size: 12px;
 }
 
 /* Modal Footer */
@@ -228,6 +269,9 @@
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .btn:disabled {
@@ -262,25 +306,7 @@
   background: #f56565;
 }
 
-/* Additional CSS for enhanced EventModal */
-.field-error {
-  display: block;
-  color: #ef4444;
-  font-size: 12px;
-  margin-top: 4px;
-}
-
-.form-group input.error,
-.form-group textarea.error {
-  border-color: #ef4444;
-}
-
-.form-group input.error:focus,
-.form-group textarea.error:focus {
-  border-color: #ef4444;
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
-}
-
+/* Loading spinner */
 .btn-spinner {
   display: inline-block;
   width: 14px;
@@ -289,7 +315,6 @@
   border-radius: 50%;
   border-top-color: transparent;
   animation: spin 0.8s linear infinite;
-  margin-right: 8px;
 }
 
 @keyframes spin {
@@ -304,21 +329,14 @@
   color: #718096;
 }
 
-.booking-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 0;
-  border-bottom: 1px solid #f7fafc;
+/* Program assignment select */
+.form-group select option {
+  padding: 8px;
 }
 
-.booking-item:last-child {
-  border-bottom: none;
-}
-
-.booking-item small {
-  color: #718096;
-  font-size: 12px;
+.form-group select option:disabled {
+  color: #a0aec0;
+  font-style: italic;
 }
 
 /* Responsive design */
@@ -351,5 +369,6 @@
   .btn {
     flex: 1;
     min-width: 100px;
+    justify-content: center;
   }
 }
