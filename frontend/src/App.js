@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginForm from './components/LoginForm';
 import DashboardPage from './pages/DashboardPage';
+import CalendarPage from './pages/CalendarPage';
 import authService from './services/authService';
 import './App.css';
 
@@ -82,6 +83,17 @@ function App() {
             />
             
             <Route 
+              path="/calendar" 
+              element={
+                user ? (
+                  <CalendarPage />
+                ) : (
+                  <Navigate to="/login" replace />
+                )
+              } 
+            />
+            
+            <Route 
               path="/" 
               element={<Navigate to={user ? "/dashboard" : "/login"} replace />} 
             />
@@ -94,20 +106,6 @@ function App() {
                   <div style={{ padding: '40px' }}>
                     <h2>Facilities Management</h2>
                     <p>Facility management features coming soon...</p>
-                  </div>
-                ) : (
-                  <Navigate to="/login" replace />
-                )
-              } 
-            />
-            
-            <Route 
-              path="/calendar" 
-              element={
-                user ? (
-                  <div style={{ padding: '40px' }}>
-                    <h2>Calendar View</h2>
-                    <p>Calendar features coming soon...</p>
                   </div>
                 ) : (
                   <Navigate to="/login" replace />
