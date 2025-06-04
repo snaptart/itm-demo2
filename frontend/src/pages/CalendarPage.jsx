@@ -1,4 +1,4 @@
-// frontend/src/pages/CalendarPage.jsx (Updated with time capture for modal)
+// frontend/src/pages/CalendarPage.jsx - Updated Event Handling
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CalendarView from '../components/calendar/CalendarView/CalendarView';
 import CalendarSidebar from '../components/calendar/CalendarSidebar/CalendarSidebar';
@@ -138,14 +138,8 @@ function CalendarPage() {
           selectedResources.includes(event.resourceId?.toString())
         );
         
-        // Apply admin color adjustments if needed
-        const processedEvents = filteredEvents.map(event => ({
-          ...event,
-          backgroundColor: isAdmin ? calendarService.getAdminStatusColor(event) : event.backgroundColor,
-          borderColor: isAdmin ? calendarService.getAdminStatusColor(event) : event.borderColor
-        }));
-        
-        setEvents(processedEvents);
+        console.log('Loaded events:', filteredEvents.length);
+        setEvents(filteredEvents);
       } else {
         setError(eventsResult.error);
         if (!eventsResult.cancelled) {

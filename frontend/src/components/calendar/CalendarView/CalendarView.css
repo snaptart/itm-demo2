@@ -1,4 +1,4 @@
-/* frontend/src/components/calendar/CalendarView/CalendarView.css */
+/* frontend/src/components/calendar/CalendarView/CalendarView.css - Fixed Event Styling */
 .calendar-view-container {
   height: 100%;
   display: flex;
@@ -54,180 +54,107 @@
   border-color: #2d3748 !important;
 }
 
-/* Custom event styling */
-.fc-event-custom {
+/* FullCalendar Event Content Styling - Simplified */
+.fc-event-content-month {
   padding: 2px 4px;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  position: relative;
-  transition: all 0.2s ease;
+  font-size: 11px;
+  line-height: 1.2;
 }
 
-.fc-event-custom.editable {
-  cursor: move;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.fc-event-custom.editable:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  transform: translateY(-1px);
-}
-
-.fc-event-custom.non-editable {
-  cursor: default;
-  opacity: 0.8;
-}
-
-/* Drag and drop visual states */
-.fc-event-custom.fc-event-drag-start {
-  opacity: 0.7;
-  transform: scale(1.02);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  z-index: 1000;
-}
-
-.fc-event-custom.fc-event-dragging {
-  opacity: 0.8;
-  transform: rotate(2deg);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
-}
-
-.fc-event-custom.fc-event-resizing {
-  box-shadow: 0 4px 12px rgba(66, 153, 225, 0.3);
-  border-color: #4299e1;
-}
-
-/* Drag handles */
-.fc-event-drag-handle {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 12px;
-  height: 12px;
-  font-size: 8px;
-  color: rgba(0, 0, 0, 0.5);
-  cursor: move;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.8);
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-
-.fc-event-custom.editable:hover .fc-event-drag-handle {
-  opacity: 1;
-}
-
-.fc-event-resize-handle {
-  position: absolute;
-  bottom: 1px;
-  right: 1px;
-  width: 12px;
-  height: 12px;
-  font-size: 10px;
-  color: rgba(0, 0, 0, 0.5);
-  cursor: se-resize;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.8);
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-
-.fc-event-custom.editable:hover .fc-event-resize-handle {
-  opacity: 1;
-}
-
-/* Event content */
-.fc-event-time {
+.fc-event-time-month {
   font-weight: 600;
-  margin-bottom: 2px;
-  margin-left: 14px; /* Make room for drag handle */
+  margin-bottom: 1px;
 }
 
-.fc-event-title {
+.fc-event-title-month {
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-left: 14px; /* Make room for drag handle */
 }
 
-.fc-event-details {
+.fc-event-content-list {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
-  margin-top: 2px;
-  opacity: 0.8;
-  margin-left: 14px; /* Make room for drag handle */
-  margin-right: 14px; /* Make room for resize handle */
+  align-items: center;
+  width: 100%;
+  padding: 4px 0;
 }
 
-.fc-event-resource {
+.fc-event-main-list {
+  flex: 1;
+  font-size: 14px;
+}
+
+.fc-event-details-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.fc-event-price-list {
+  font-weight: 600;
+}
+
+.fc-event-status-list {
+  font-size: 10px;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.fc-event-content-time {
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1.3;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+.fc-event-title-time {
+  font-weight: 600;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-event-details-time {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  opacity: 0.9;
+}
+
+.fc-event-resource-time {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 60%;
 }
 
-.fc-event-price {
+.fc-event-price-time {
   font-weight: 600;
 }
 
-.fc-event-status-badge {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  margin-top: 2px;
-  margin-left: 14px; /* Make room for drag handle */
+/* Remove custom event color overrides to let FullCalendar handle colors */
+/* Status-specific colors are now handled via backgroundColor/borderColor props */
+
+/* Drag and drop visual feedback */
+.fc-event.fc-event-dragging {
+  opacity: 0.8 !important;
+  transform: rotate(2deg) !important;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25) !important;
+  z-index: 1000 !important;
 }
 
-/* Status-specific colors */
-.fc-event.available {
-  background-color: #FFFFFF !important;
-  color: #1a202c !important;
-  border-color: #cbd5e0 !important;
-}
-
-.fc-event.assigned {
-  background-color: #FFEB3B !important;
-  color: #1a202c !important;
-  border-color: #F9A825 !important;
-}
-
-.fc-event.pending {
-  background-color: #FFEB3B !important;
-  color: #1a202c !important;
-  border-color: #F9A825 !important;
-}
-
-.fc-event.booked {
-  background-color: #4CAF50 !important;
-  color: white !important;
-  border-color: #388E3C !important;
-}
-
-.fc-event.maintenance,
-.fc-event.cancelled {
-  background-color: #9E9E9E !important;
-  color: white !important;
-  border-color: #616161 !important;
-}
-
-/* Admin view - Assigned Reserved (Blue) */
-.fc-event.assigned-reserved {
-  background-color: #2196F3 !important;
-  color: white !important;
-  border-color: #1976D2 !important;
+.fc-event.fc-event-resizing {
+  box-shadow: 0 4px 12px rgba(66, 153, 225, 0.3) !important;
+  border-width: 2px !important;
 }
 
 /* Drag ghost/mirror styling */
@@ -247,17 +174,6 @@
 
 .fc-timegrid-slot.fc-highlight {
   background-color: rgba(66, 153, 225, 0.1) !important;
-}
-
-/* Conflict detection styles */
-.fc-event-custom.conflict-warning {
-  border-color: #f59e0b !important;
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
-}
-
-.fc-event-custom.conflict-error {
-  border-color: #ef4444 !important;
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.3);
 }
 
 /* List view customization */
@@ -324,28 +240,31 @@
   width: 20px;
   height: 20px;
   border-radius: 4px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .legend-color.available {
   background-color: #FFFFFF;
-  border-color: #cbd5e0;
+  border: 1px solid #CBD5E0;
 }
 
 .legend-color.assigned-pending {
   background-color: #FFEB3B;
+  border: 1px solid #F9A825;
 }
 
 .legend-color.assigned-reserved {
   background-color: #2196F3;
+  border: 1px solid #1976D2;
 }
 
 .legend-color.booked {
   background-color: #4CAF50;
+  border: 1px solid #388E3C;
 }
 
 .legend-color.maintenance {
   background-color: #9E9E9E;
+  border: 1px solid #616161;
 }
 
 /* Drag and drop help text */
@@ -395,12 +314,9 @@
     justify-content: center;
   }
   
-  .fc-event-custom {
-    font-size: 11px;
-  }
-  
-  .fc-event-details {
-    display: none;
+  .fc-event-content-month,
+  .fc-event-content-time {
+    font-size: 10px;
   }
   
   .legend-items {
@@ -411,4 +327,58 @@
   .drag-drop-help {
     display: none;
   }
+}
+
+/* High contrast and accessibility improvements */
+.fc-event {
+  border-width: 2px !important;
+  font-weight: 500 !important;
+}
+
+.fc-event:focus {
+  outline: 2px solid #4299e1;
+  outline-offset: 2px;
+}
+
+/* Ensure proper event alignment with time slots */
+.fc-timegrid-event {
+  border-radius: 3px;
+  margin: 0 1px;
+}
+
+.fc-daygrid-event {
+  border-radius: 3px;
+  margin: 1px 2px;
+}
+
+/* Improve readability */
+.fc-event-title,
+.fc-event-time {
+  text-shadow: none;
+  font-family: inherit;
+}
+
+/* Fix for event overlap in month view */
+.fc-daygrid-event-harness {
+  margin-top: 1px;
+  margin-bottom: 1px;
+}
+
+/* Custom scrollbar for calendar */
+.fc-scroller::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.fc-scroller::-webkit-scrollbar-track {
+  background: #f3f4f6;
+}
+
+.fc-scroller::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 4px;
+}
+
+.fc-scroller::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
 }

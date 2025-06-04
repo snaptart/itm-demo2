@@ -1,4 +1,4 @@
-// frontend/src/services/dragDropService.js (Simplified - Local Time)
+// frontend/src/services/dragDropService.js - Enhanced Error Handling
 import calendarService from './calendarService';
 
 class DragDropService {
@@ -65,6 +65,8 @@ class DragDropService {
         revert
       });
 
+      console.log('Moving episode:', episodeId, 'to:', newStartTime, '-', newEndTime);
+
       // Perform the actual update using the calendar service
       const result = await calendarService.moveEpisode(
         episodeId,
@@ -82,7 +84,7 @@ class DragDropService {
         };
       } else {
         // Rollback the UI change
-        revert();
+        if (revert) revert();
         return {
           success: false,
           error: result.error || 'Failed to move ice time'
@@ -93,7 +95,7 @@ class DragDropService {
       console.error('Move episode error:', error);
       
       // Rollback the UI change
-      revert();
+      if (revert) revert();
       this.pendingOperations.delete(operationId);
 
       return {
@@ -116,6 +118,8 @@ class DragDropService {
         revert
       });
 
+      console.log('Resizing episode:', episodeId, 'to end at:', newEndTime);
+
       // Perform the actual update using the calendar service
       const result = await calendarService.resizeEpisode(
         episodeId,
@@ -126,22 +130,27 @@ class DragDropService {
 
       if (result.success) {
         // Calculate duration for message
-        const episodeResult = await calendarService.getEpisodeById(episodeId);
         let duration = 'updated';
-        if (episodeResult.success) {
-          const startTime = new Date(episodeResult.data.episode.episode_start_date_time);
-          const endTime = new Date(newEndTime);
-          duration = Math.round((endTime - startTime) / (1000 * 60));
+        try {
+          const episodeResult = await calendarService.getEpisodeById(episodeId);
+          if (episodeResult.success) {
+            const startTime = new Date(episodeResult.data.episode.episode_start_date_time);
+            const endTime = new Date(newEndTime);
+            const durationMinutes = Math.round((endTime - startTime) / (1000 * 60));
+            duration = `${durationMinutes} minutes`;
+          }
+        } catch (durationError) {
+          console.warn('Could not calculate duration:', durationError);
         }
 
         return { 
           success: true, 
           data: result.data,
-          message: `Ice time duration updated to ${duration} minutes`
+          message: `Ice time duration updated to ${duration}`
         };
       } else {
         // Rollback the UI change
-        revert();
+        if (revert) revert();
         return {
           success: false,
           error: result.error || 'Failed to resize ice time'
@@ -152,7 +161,7 @@ class DragDropService {
       console.error('Resize episode error:', error);
       
       // Rollback the UI change
-      revert();
+      if (revert) revert();
       this.pendingOperations.delete(operationId);
 
       return {
@@ -418,6 +427,25 @@ class DragDropService {
       rollbackFunction();
       throw error;
     }
+  }
+
+  // Helper method for time formatting
+  formatDuration(minutes) {
+    if (minutes < 60) {
+      return `${minutes} minutes`;
+    } else {
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    }
+  }
+
+  // Debug method to log current state
+  debugState() {
+    console.log('DragDropService State:', {
+      pendingOperations: this.pendingOperations.size,
+      operations: Array.from(this.pendingOperations.keys())
+    });
   }
 }
 

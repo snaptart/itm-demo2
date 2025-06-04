@@ -1,4 +1,4 @@
-// frontend/src/components/calendar/CalendarView/CalendarView.jsx - Simplified Local Time
+// frontend/src/components/calendar/CalendarView/CalendarView.jsx - Fixed Event Styling
 import React, { useRef, useEffect } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -71,6 +71,53 @@ function CalendarView({
       startTime: '06:00',
       endTime: '23:00'
     };
+  };
+
+  // Get status colors based on booking status
+  const getStatusColors = (status) => {
+    const colorMap = {
+      'available': {
+        backgroundColor: '#FFFFFF',
+        borderColor: '#CBD5E0',
+        textColor: '#2D3748'
+      },
+      'assigned': {
+        backgroundColor: '#FFEB3B',
+        borderColor: '#F9A825',
+        textColor: '#1A202C'
+      },
+      'pending': {
+        backgroundColor: '#FFEB3B',
+        borderColor: '#F9A825',
+        textColor: '#1A202C'
+      },
+      'booked': {
+        backgroundColor: '#4CAF50',
+        borderColor: '#388E3C',
+        textColor: '#FFFFFF'
+      },
+      'maintenance': {
+        backgroundColor: '#9E9E9E',
+        borderColor: '#616161',
+        textColor: '#FFFFFF'
+      },
+      'cancelled': {
+        backgroundColor: '#9E9E9E',
+        borderColor: '#616161',
+        textColor: '#FFFFFF'
+      }
+    };
+
+    // Admin view - show assigned-reserved in blue
+    if (isAdmin && status === 'assigned') {
+      return {
+        backgroundColor: '#2196F3',
+        borderColor: '#1976D2',
+        textColor: '#FFFFFF'
+      };
+    }
+
+    return colorMap[status] || colorMap['available'];
   };
 
   // Handle event drop (drag and drop)
@@ -214,40 +261,51 @@ function CalendarView({
 
   const renderEventContent = (eventInfo) => {
     const { event } = eventInfo;
-    const isMultiDay = event.allDay || 
-      (event.start && event.end && event.start.getDate() !== event.end.getDate());
-    
+    const status = event.extendedProps?.status || 'available';
     const editable = isEventEditable(event);
 
-    return (
-      <div className={`fc-event-custom ${event.extendedProps.status} ${editable ? 'editable' : 'non-editable'}`}>
-        {editable && isAdmin && (
-          <div className="fc-event-drag-handle">⋮⋮</div>
-        )}
-        <div className="fc-event-time">
-          {eventInfo.timeText}
-        </div>
-        <div className="fc-event-title">
-          {event.title}
-        </div>
-        {(view === 'dayGridMonth' || isMultiDay) && (
-          <div className="fc-event-details">
-            <span className="fc-event-resource">{event.extendedProps.resource}</span>
-            {event.extendedProps.price && (
-              <span className="fc-event-price">{event.extendedProps.price}</span>
-            )}
+    // Simplified content that works with FullCalendar's positioning
+    if (view === 'dayGridMonth') {
+      // Month view - minimal content
+      return {
+        html: `
+          <div class="fc-event-content-month">
+            <div class="fc-event-time-month">${eventInfo.timeText}</div>
+            <div class="fc-event-title-month">${event.title || 'Ice Time'}</div>
           </div>
-        )}
-        {event.extendedProps.status && (
-          <div className={`fc-event-status-badge ${event.extendedProps.status}`}>
-            {getStatusLabel(event.extendedProps.status)}
+        `
+      };
+    } else if (view === 'listWeek') {
+      // List view - detailed content
+      const programName = event.extendedProps?.assignedProgram || '';
+      return {
+        html: `
+          <div class="fc-event-content-list">
+            <div class="fc-event-main-list">
+              <strong>${event.extendedProps?.resource || event.title}</strong>
+              ${programName ? ` - ${programName}` : ''}
+            </div>
+            <div class="fc-event-details-list">
+              <span class="fc-event-price-list">$${event.extendedProps?.price || '0'}</span>
+              <span class="fc-event-status-list">${getStatusLabel(status)}</span>
+            </div>
           </div>
-        )}
-        {editable && isAdmin && view !== 'dayGridMonth' && (
-          <div className="fc-event-resize-handle">↘</div>
-        )}
-      </div>
-    );
+        `
+      };
+    } else {
+      // Week/Day views - balanced content
+      return {
+        html: `
+          <div class="fc-event-content-time">
+            <div class="fc-event-title-time">${event.title || 'Ice Time'}</div>
+            <div class="fc-event-details-time">
+              <span class="fc-event-resource-time">${event.extendedProps?.resource || ''}</span>
+              ${event.extendedProps?.price ? `<span class="fc-event-price-time">$${event.extendedProps.price}</span>` : ''}
+            </div>
+          </div>
+        `
+      };
+    }
   };
 
   const getStatusLabel = (status) => {
@@ -278,15 +336,26 @@ function CalendarView({
 
   // Process events to ensure proper handling
   const processedEvents = events.map(event => {
+    const editable = isEventEditable(event);
+    const status = event.extendedProps?.status || 'available';
+    
+    // Get proper colors based on status
+    const colors = getStatusColors(status);
+    
     // Ensure dates are Date objects for FullCalendar
     const processedEvent = {
       ...event,
       start: event.start instanceof Date ? event.start : new Date(event.start),
       end: event.end instanceof Date ? event.end : new Date(event.end),
+      backgroundColor: colors.backgroundColor,
+      borderColor: colors.borderColor,
+      textColor: colors.textColor,
       // Set editability based on business rules
-      editable: isEventEditable(event),
-      startEditable: isEventEditable(event),
-      durationEditable: isEventEditable(event) && view !== 'dayGridMonth'
+      editable: editable,
+      startEditable: editable,
+      durationEditable: editable && view !== 'dayGridMonth',
+      // Remove custom className to avoid CSS conflicts
+      className: []
     };
 
     return processedEvent;
@@ -331,6 +400,8 @@ function CalendarView({
         eventDisplay="block"
         dayMaxEvents={true}
         moreLinkClick="popover"
+        eventOverlap={false}
+        slotEventOverlap={false}
         eventTimeFormat={{
           hour: 'numeric',
           minute: '2-digit',
@@ -340,6 +411,21 @@ function CalendarView({
           hour: 'numeric',
           minute: '2-digit',
           meridiem: 'short'
+        }}
+        eventDidMount={(info) => {
+          // Add hover effects for editable events
+          const editable = isEventEditable(info.event);
+          if (editable && isAdmin) {
+            info.el.style.cursor = 'move';
+            info.el.addEventListener('mouseenter', () => {
+              info.el.style.transform = 'translateY(-1px)';
+              info.el.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.15)';
+            });
+            info.el.addEventListener('mouseleave', () => {
+              info.el.style.transform = 'none';
+              info.el.style.boxShadow = 'none';
+            });
+          }
         }}
         views={{
           listWeek: {

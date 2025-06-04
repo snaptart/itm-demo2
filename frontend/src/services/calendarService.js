@@ -1,4 +1,4 @@
-// frontend/src/services/calendarService.js (Simplified - Local Time)
+// frontend/src/services/calendarService.js - Fixed Event Data Processing
 import api from './api';
 import { dateUtils } from '../utils/dateUtils';
 
@@ -55,7 +55,15 @@ const calendarService = {
         ...event,
         // Ensure dates are Date objects for FullCalendar
         start: new Date(event.start),
-        end: new Date(event.end)
+        end: new Date(event.end),
+        // Ensure we have all necessary extended props
+        extendedProps: {
+          ...event.extendedProps,
+          episodeId: event.extendedProps?.episodeId || event.id,
+          status: event.extendedProps?.status || 'available',
+          resource: event.extendedProps?.resource || event.title,
+          price: event.extendedProps?.price || 0
+        }
       })) || [];
 
       return { 
@@ -300,24 +308,52 @@ const calendarService = {
     };
   },
 
-  // Get status color mapping
+  // Get status color mapping for reference
   getStatusColorMap() {
     return {
-      'available': '#FFFFFF',
-      'assigned': '#FFEB3B',
-      'pending': '#FFEB3B',
-      'booked': '#4CAF50',
-      'maintenance': '#9E9E9E',
-      'cancelled': '#9E9E9E'
+      'available': {
+        backgroundColor: '#FFFFFF',
+        borderColor: '#CBD5E0',
+        textColor: '#2D3748'
+      },
+      'assigned': {
+        backgroundColor: '#FFEB3B',
+        borderColor: '#F9A825',
+        textColor: '#1A202C'
+      },
+      'pending': {
+        backgroundColor: '#FFEB3B',
+        borderColor: '#F9A825',
+        textColor: '#1A202C'
+      },
+      'booked': {
+        backgroundColor: '#4CAF50',
+        borderColor: '#388E3C',
+        textColor: '#FFFFFF'
+      },
+      'maintenance': {
+        backgroundColor: '#9E9E9E',
+        borderColor: '#616161',
+        textColor: '#FFFFFF'
+      },
+      'cancelled': {
+        backgroundColor: '#9E9E9E',
+        borderColor: '#616161',
+        textColor: '#FFFFFF'
+      }
     };
   },
 
-  // Get admin-specific status color
-  getAdminStatusColor(episode) {
-    if (episode.status === 'assigned' && episode.extendedProps?.assignedProgram) {
-      return '#2196F3'; // Blue: Assigned Reserved
+  // Get admin-specific status color (blue for assigned reserved)
+  getAdminStatusColor(episode, isAdmin = false) {
+    if (isAdmin && episode.status === 'assigned' && episode.extendedProps?.assignedProgram) {
+      return {
+        backgroundColor: '#2196F3',
+        borderColor: '#1976D2',
+        textColor: '#FFFFFF'
+      };
     }
-    return this.getStatusColorMap()[episode.status] || '#FFFFFF';
+    return this.getStatusColorMap()[episode.status] || this.getStatusColorMap()['available'];
   },
 
   // Check if episode can be moved/resized
@@ -348,6 +384,28 @@ const calendarService = {
     }
     
     return { allowed: true };
+  },
+
+  // Batch validation for multiple moves (for future use)
+  async validateBatchMoves(moves) {
+    try {
+      const response = await api.post('/api/episodes/validate-batch-moves', { moves });
+      
+      return {
+        success: true,
+        data: {
+          isValid: response.data.valid,
+          results: response.data.results || [],
+          overallConflicts: response.data.overallConflicts || []
+        }
+      };
+    } catch (error) {
+      console.error('Batch validation error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || 'Failed to validate batch moves'
+      };
+    }
   }
 };
 
