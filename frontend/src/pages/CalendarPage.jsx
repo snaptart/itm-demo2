@@ -1,9 +1,11 @@
-// frontend/src/pages/CalendarPage.jsx - Updated Event Handling
+// frontend/src/pages/CalendarPage.jsx - Enhanced for Program Schedulers
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CalendarView from '../components/calendar/CalendarView/CalendarView';
 import CalendarSidebar from '../components/calendar/CalendarSidebar/CalendarSidebar';
 import EventModal from '../components/calendar/EventModal/EventModal';
 import CreateEventModal from '../components/calendar/CreateEventModal/CreateEventModal';
+import RequestIceTimeModal from '../components/calendar/RequestIceTimeModal/RequestIceTimeModal';
+import ShoppingCartPanel from '../components/calendar/ShoppingCartPanel/ShoppingCartPanel';
 import LoadingSpinner from '../components/common/LoadingSpinner/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage/ErrorMessage';
 import { ToastContainer, useToast } from '../components/common/Toast/Toast';
@@ -11,6 +13,7 @@ import calendarService from '../services/calendarService';
 import dragDropService from '../services/dragDropService';
 import facilityService from '../services/facilityService';
 import resourceService from '../services/resourceService';
+import schedulerService from '../services/schedulerService';
 import authService from '../services/authService';
 import './CalendarPage.css';
 
@@ -25,11 +28,24 @@ function CalendarPage() {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [showEventModal, setShowEventModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showRequestModal, setShowRequestModal] = useState(false);
   const [selectedDateForCreate, setSelectedDateForCreate] = useState(null);
   const [calendarView, setCalendarView] = useState('month');
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  
+  // Program Scheduler specific state
+  const [shoppingCart, setShoppingCart] = useState([]);
+  const [showShoppingCart, setShowShoppingCart] = useState(false);
+  const [viewFilters, setViewFilters] = useState({
+    showPublicAvailable: true,
+    showAssignedToMe: true,
+    showMyBookings: true,
+    showOtherBookings: false
+  });
+  const [userPrograms, setUserPrograms] = useState([]);
+  const [selectedProgram, setSelectedProgram] = useState(null);
   
   // Toast notifications
   const { toasts, addToast, removeToast, success, error: errorToast, info, warning } = useToast();
@@ -43,9 +59,15 @@ function CalendarPage() {
   
   const currentUser = authService.getCurrentUser();
   const isAdmin = currentUser?.user_type === 'admin';
+  const isScheduler = currentUser?.user_type === 'scheduler';
 
   useEffect(() => {
     loadInitialData();
+    
+    if (isScheduler) {
+      loadShoppingCartFromStorage();
+      loadUserPrograms();
+    }
     
     // Cleanup on unmount
     return () => {
@@ -53,6 +75,9 @@ function CalendarPage() {
         loadEventsAbortController.current.abort();
       }
       dragDropService.cleanup();
+      // Clear any pending timeouts
+      setIsLoadingEvents(false);
+      setIsDragging(false);
     };
   }, []);
 
@@ -64,7 +89,49 @@ function CalendarPage() {
       
       return () => clearTimeout(timeoutId);
     }
-  }, [selectedFacility, selectedResources, calendarDate, calendarView]);
+  }, [selectedFacility, selectedResources, calendarDate, calendarView, viewFilters, selectedProgram]);
+
+  // Load user's programs if scheduler
+  const loadUserPrograms = async () => {
+    if (!isScheduler) return;
+    
+    try {
+      const result = await schedulerService.getUserPrograms();
+      if (result.success) {
+        setUserPrograms(result.data.programs);
+        // Auto-select first program if available
+        if (result.data.programs.length > 0) {
+          setSelectedProgram(result.data.programs[0]);
+        }
+      } else {
+        errorToast('Failed to load your programs');
+      }
+    } catch (err) {
+      console.error('Load user programs error:', err);
+      errorToast('Failed to load your programs');
+    }
+  };
+
+  // Load shopping cart from localStorage
+  const loadShoppingCartFromStorage = () => {
+    try {
+      const saved = localStorage.getItem(`shoppingCart_${currentUser?.user_id}`);
+      if (saved) {
+        setShoppingCart(JSON.parse(saved));
+      }
+    } catch (err) {
+      console.error('Error loading shopping cart:', err);
+    }
+  };
+
+  // Save shopping cart to localStorage
+  const saveShoppingCartToStorage = (cart) => {
+    try {
+      localStorage.setItem(`shoppingCart_${currentUser?.user_id}`, JSON.stringify(cart));
+    } catch (err) {
+      console.error('Error saving shopping cart:', err);
+    }
+  };
 
   const loadInitialData = async () => {
     try {
@@ -127,10 +194,20 @@ function CalendarPage() {
       const dateRange = calendarService.getCalendarDateRange(calendarView, calendarDate);
       const params = {
         ...dateRange,
-        facility_id: selectedFacility?.facility_id
+        facility_id: selectedFacility?.facility_id,
+        // Scheduler-specific filters
+        ...(isScheduler && {
+          program_id: selectedProgram?.program_id,
+          show_public_available: viewFilters.showPublicAvailable,
+          show_assigned_to_me: viewFilters.showAssignedToMe,
+          show_my_bookings: viewFilters.showMyBookings,
+          show_other_bookings: viewFilters.showOtherBookings
+        })
       };
 
-      const eventsResult = await calendarService.getEpisodes(params);
+      const eventsResult = isScheduler 
+        ? await schedulerService.getFilteredEpisodes(params)
+        : await calendarService.getEpisodes(params);
       
       if (eventsResult.success) {
         // Filter events by selected resources
@@ -138,8 +215,17 @@ function CalendarPage() {
           selectedResources.includes(event.resourceId?.toString())
         );
         
-        console.log('Loaded events:', filteredEvents.length);
-        setEvents(filteredEvents);
+        // Mark events that are in shopping cart
+        const eventsWithCartStatus = filteredEvents.map(event => ({
+          ...event,
+          extendedProps: {
+            ...event.extendedProps,
+            inShoppingCart: shoppingCart.some(item => item.episodeId === event.extendedProps?.episodeId)
+          }
+        }));
+        
+        console.log('Loaded events:', eventsWithCartStatus.length);
+        setEvents(eventsWithCartStatus);
       } else {
         setError(eventsResult.error);
         if (!eventsResult.cancelled) {
@@ -181,6 +267,22 @@ function CalendarPage() {
 
   const handleEventClick = async (info) => {
     const episodeId = info.event.extendedProps.episodeId;
+    const status = info.event.extendedProps.status;
+    
+    // For schedulers, handle different click behaviors based on status
+    if (isScheduler) {
+      if (status === 'available' && !info.event.extendedProps.inShoppingCart) {
+        // Add to shopping cart
+        handleAddToCart(info.event);
+        return;
+      } else if (info.event.extendedProps.inShoppingCart) {
+        // Remove from shopping cart
+        handleRemoveFromCart(episodeId);
+        return;
+      }
+    }
+    
+    // Default behavior - show details modal
     setSelectedEvent({ episode_id: episodeId });
     setShowEventModal(true);
   };
@@ -212,11 +314,17 @@ function CalendarPage() {
       allDay: true,
       clickedTime: null // No specific time clicked
     });
-    setShowCreateModal(true);
+    
+    if (isScheduler) {
+      setShowRequestModal(true);
+    } else {
+      setShowCreateModal(true);
+    }
   };
 
   const handleCreateModalClose = () => {
     setShowCreateModal(false);
+    setShowRequestModal(false);
     setSelectedDateForCreate(null);
   };
 
@@ -224,6 +332,7 @@ function CalendarPage() {
     success('Ice time created successfully');
     await loadCalendarEvents();
     setShowCreateModal(false);
+    setShowRequestModal(false);
     setSelectedDateForCreate(null);
   };
 
@@ -236,6 +345,14 @@ function CalendarPage() {
         clickedTime: arg.date // This contains the time if clicked on a time slot
       });
       setShowCreateModal(true);
+    } else if (isScheduler) {
+      // For schedulers, clicking on empty time could request ice time
+      setSelectedDateForCreate({
+        date: arg.date,
+        allDay: arg.allDay,
+        clickedTime: arg.date
+      });
+      setShowRequestModal(true);
     }
   };
 
@@ -249,6 +366,99 @@ function CalendarPage() {
         endTime: selectInfo.end // Also pass end time for potential future use
       });
       setShowCreateModal(true);
+    } else if (isScheduler) {
+      setSelectedDateForCreate({
+        date: selectInfo.start,
+        allDay: selectInfo.allDay,
+        clickedTime: selectInfo.start,
+        endTime: selectInfo.end
+      });
+      setShowRequestModal(true);
+    }
+  };
+
+  // Shopping Cart Functions
+  const handleAddToCart = (event) => {
+    const cartItem = {
+      episodeId: event.extendedProps.episodeId,
+      facilityId: selectedFacility.facility_id,
+      facilityName: selectedFacility.facility_name,
+      resourceName: event.extendedProps.resource,
+      startTime: event.start.toISOString(),
+      endTime: event.end.toISOString(),
+      price: event.extendedProps.price || 0,
+      title: event.title,
+      addedAt: new Date().toISOString()
+    };
+    
+    const newCart = [...shoppingCart, cartItem];
+    setShoppingCart(newCart);
+    saveShoppingCartToStorage(newCart);
+    
+    // Update events to reflect cart status
+    setEvents(prev => prev.map(e => 
+      e.extendedProps?.episodeId === cartItem.episodeId 
+        ? { ...e, extendedProps: { ...e.extendedProps, inShoppingCart: true } }
+        : e
+    ));
+    
+    success(`Added ${event.title} to shopping cart`);
+  };
+
+  const handleRemoveFromCart = (episodeId) => {
+    const newCart = shoppingCart.filter(item => item.episodeId !== episodeId);
+    setShoppingCart(newCart);
+    saveShoppingCartToStorage(newCart);
+    
+    // Update events to reflect cart status
+    setEvents(prev => prev.map(e => 
+      e.extendedProps?.episodeId === episodeId 
+        ? { ...e, extendedProps: { ...e.extendedProps, inShoppingCart: false } }
+        : e
+    ));
+    
+    info('Removed from shopping cart');
+  };
+
+  const handleClearCart = () => {
+    // Update all events to remove cart status
+    setEvents(prev => prev.map(e => ({
+      ...e,
+      extendedProps: { ...e.extendedProps, inShoppingCart: false }
+    })));
+    
+    setShoppingCart([]);
+    saveShoppingCartToStorage([]);
+    info('Shopping cart cleared');
+  };
+
+  const handleSubmitRequests = async () => {
+    if (shoppingCart.length === 0) {
+      warning('Your shopping cart is empty');
+      return;
+    }
+    
+    if (!selectedProgram) {
+      errorToast('Please select a program first');
+      return;
+    }
+    
+    try {
+      const result = await schedulerService.submitIceTimeRequests({
+        program_id: selectedProgram.program_id,
+        requests: shoppingCart
+      });
+      
+      if (result.success) {
+        success(`Submitted ${shoppingCart.length} ice time requests`);
+        handleClearCart();
+        await loadCalendarEvents();
+      } else {
+        errorToast(result.error || 'Failed to submit requests');
+      }
+    } catch (err) {
+      console.error('Submit requests error:', err);
+      errorToast('Failed to submit requests');
     }
   };
 
@@ -260,7 +470,14 @@ function CalendarPage() {
     setCalendarDate(date);
   }, []);
 
-  // Drag and drop handlers
+  const handleFilterChange = (filterKey, value) => {
+    setViewFilters(prev => ({
+      ...prev,
+      [filterKey]: value
+    }));
+  };
+
+  // Drag and drop handlers (admin only)
   const handleDragStart = (info) => {
     if (!isAdmin) return;
     
@@ -354,7 +571,29 @@ function CalendarPage() {
   return (
     <div className="calendar-page">
       <div className="calendar-header">
-        <h1>Ice Time Calendar</h1>
+        <div className="calendar-header-left">
+          <h1>Ice Time Calendar</h1>
+          {isScheduler && selectedProgram && (
+            <div className="selected-program">
+              <span className="program-label">Program:</span>
+              <select 
+                value={selectedProgram.program_id} 
+                onChange={(e) => {
+                  const program = userPrograms.find(p => p.program_id === parseInt(e.target.value));
+                  setSelectedProgram(program);
+                }}
+                className="program-select"
+              >
+                {userPrograms.map(program => (
+                  <option key={program.program_id} value={program.program_id}>
+                    {program.program_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+        
         <div className="calendar-header-actions">
           {isDragging && (
             <div className="drag-indicator">
@@ -362,6 +601,25 @@ function CalendarPage() {
               <span>Drag to reschedule</span>
             </div>
           )}
+          
+          {isScheduler && (
+            <>
+              <button 
+                className={`shopping-cart-btn ${shoppingCart.length > 0 ? 'has-items' : ''}`}
+                onClick={() => setShowShoppingCart(!showShoppingCart)}
+              >
+                🛒 Cart ({shoppingCart.length})
+              </button>
+              <button 
+                className="request-ice-btn"
+                onClick={handleCreateEvent}
+                disabled={!selectedFacility || selectedResources.length === 0 || isDragging}
+              >
+                Request Ice Time
+              </button>
+            </>
+          )}
+          
           {isAdmin && (
             <button 
               className="create-event-btn"
@@ -385,6 +643,12 @@ function CalendarPage() {
           onFacilityChange={handleFacilityChange}
           onResourceToggle={handleResourceToggle}
           isAdmin={isAdmin}
+          isScheduler={isScheduler}
+          viewFilters={viewFilters}
+          onFilterChange={handleFilterChange}
+          userPrograms={userPrograms}
+          selectedProgram={selectedProgram}
+          onProgramChange={setSelectedProgram}
         />
 
         <div className="calendar-main">
@@ -410,6 +674,8 @@ function CalendarPage() {
                 onDragStart={handleDragStart}
                 onDragStop={handleDragStop}
                 isAdmin={isAdmin}
+                isScheduler={isScheduler}
+                shoppingCart={shoppingCart}
               />
             </>
           ) : (
@@ -418,12 +684,26 @@ function CalendarPage() {
             </div>
           )}
         </div>
+
+        {/* Shopping Cart Panel */}
+        {isScheduler && showShoppingCart && (
+          <ShoppingCartPanel
+            items={shoppingCart}
+            onRemoveItem={handleRemoveFromCart}
+            onClearCart={handleClearCart}
+            onSubmitRequests={handleSubmitRequests}
+            onClose={() => setShowShoppingCart(false)}
+            selectedProgram={selectedProgram}
+            isSubmitting={false}
+          />
+        )}
       </div>
 
       {showEventModal && selectedEvent && (
         <EventModal
           event={selectedEvent}
           isAdmin={isAdmin}
+          isScheduler={isScheduler}
           onClose={handleEventModalClose}
           onUpdate={handleEventUpdate}
           onSuccess={handleEventSuccess}
@@ -432,7 +712,7 @@ function CalendarPage() {
         />
       )}
 
-      {showCreateModal && selectedFacility && (
+      {showCreateModal && selectedFacility && isAdmin && (
         <CreateEventModal
           isOpen={showCreateModal}
           onClose={handleCreateModalClose}
@@ -441,6 +721,20 @@ function CalendarPage() {
           selectedResource={selectedResources[0]}
           facility={selectedFacility}
           calendarService={calendarService}
+          resourceService={resourceService}
+        />
+      )}
+
+      {showRequestModal && selectedFacility && isScheduler && selectedProgram && (
+        <RequestIceTimeModal
+          isOpen={showRequestModal}
+          onClose={handleCreateModalClose}
+          onSuccess={handleCreateSuccess}
+          selectedDate={selectedDateForCreate}
+          selectedResource={selectedResources[0]}
+          facility={selectedFacility}
+          program={selectedProgram}
+          schedulerService={schedulerService}
           resourceService={resourceService}
         />
       )}

@@ -1,3 +1,4 @@
+// frontend/src/components/calendar/CalendarSidebar/CalendarSidebar.jsx - Enhanced for Schedulers
 import React, { useState } from 'react';
 import './CalendarSidebar.css';
 
@@ -8,7 +9,13 @@ function CalendarSidebar({
   selectedResources,
   onFacilityChange,
   onResourceToggle,
-  isAdmin 
+  isAdmin,
+  isScheduler,
+  viewFilters,
+  onFilterChange,
+  userPrograms,
+  selectedProgram,
+  onProgramChange
 }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -42,6 +49,35 @@ function CalendarSidebar({
 
       {!isCollapsed && (
         <>
+          {/* Program Selection for Schedulers */}
+          {isScheduler && userPrograms && userPrograms.length > 0 && (
+            <div className="sidebar-section">
+              <h3>Program</h3>
+              <select 
+                className="program-select"
+                value={selectedProgram?.program_id || ''}
+                onChange={(e) => {
+                  const program = userPrograms.find(p => p.program_id === parseInt(e.target.value));
+                  onProgramChange(program);
+                }}
+              >
+                <option value="">Select a program...</option>
+                {userPrograms.map(program => (
+                  <option key={program.program_id} value={program.program_id}>
+                    {program.program_name}
+                  </option>
+                ))}
+              </select>
+              {selectedProgram && (
+                <div className="program-info">
+                  <p><strong>Type:</strong> {selectedProgram.programType?.program_type_name || 'N/A'}</p>
+                  <p><strong>Admin:</strong> {selectedProgram.adminUser?.first_name} {selectedProgram.adminUser?.last_name}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Facility Selection */}
           <div className="sidebar-section">
             <h3>Facility</h3>
             <select 
@@ -61,6 +97,7 @@ function CalendarSidebar({
             </select>
           </div>
 
+          {/* Resource Selection */}
           {selectedFacility && resources.length > 0 && (
             <div className="sidebar-section">
               <div className="section-header">
@@ -99,6 +136,7 @@ function CalendarSidebar({
             </div>
           )}
 
+          {/* Facility Info */}
           {selectedFacility && (
             <div className="sidebar-section">
               <h3>Facility Info</h3>
@@ -120,19 +158,142 @@ function CalendarSidebar({
             </div>
           )}
 
+          {/* View Filters */}
           <div className="sidebar-section">
-            <h3>Quick Filters</h3>
-            <div className="quick-filters">
-              <button className="filter-btn active">All Ice Time</button>
-              <button className="filter-btn">Available Only</button>
-              {isAdmin && (
+            <h3>View Filters</h3>
+            <div className="view-filters">
+              {isScheduler ? (
                 <>
-                  <button className="filter-btn">Pending Approval</button>
-                  <button className="filter-btn">Maintenance</button>
+                  <label className="filter-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={viewFilters?.showPublicAvailable || false}
+                      onChange={(e) => onFilterChange('showPublicAvailable', e.target.checked)}
+                    />
+                    <span className="filter-label">
+                      <span className="filter-color available"></span>
+                      Public Available Ice
+                    </span>
+                  </label>
+                  
+                  <label className="filter-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={viewFilters?.showAssignedToMe || false}
+                      onChange={(e) => onFilterChange('showAssignedToMe', e.target.checked)}
+                    />
+                    <span className="filter-label">
+                      <span className="filter-color assigned"></span>
+                      Assigned to Me
+                    </span>
+                  </label>
+                  
+                  <label className="filter-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={viewFilters?.showMyBookings || false}
+                      onChange={(e) => onFilterChange('showMyBookings', e.target.checked)}
+                    />
+                    <span className="filter-label">
+                      <span className="filter-color booked"></span>
+                      My Confirmed Bookings
+                    </span>
+                  </label>
+                  
+                  <label className="filter-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={viewFilters?.showOtherBookings || false}
+                      onChange={(e) => onFilterChange('showOtherBookings', e.target.checked)}
+                    />
+                    <span className="filter-label">
+                      <span className="filter-color other-bookings"></span>
+                      Other Program Bookings
+                    </span>
+                  </label>
+                </>
+              ) : (
+                <>
+                  <button className="filter-btn active">All Ice Time</button>
+                  <button className="filter-btn">Available Only</button>
+                  {isAdmin && (
+                    <>
+                      <button className="filter-btn">Pending Approval</button>
+                      <button className="filter-btn">Maintenance</button>
+                    </>
+                  )}
                 </>
               )}
             </div>
           </div>
+
+          {/* Legend */}
+          <div className="sidebar-section">
+            <h3>Legend</h3>
+            <div className="legend-items">
+              {isScheduler ? (
+                <>
+                  <div className="legend-item">
+                    <span className="legend-color available"></span>
+                    <span>Available to Request</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-color assigned"></span>
+                    <span>Assigned to My Program</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-color pending"></span>
+                    <span>Request Pending</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-color booked"></span>
+                    <span>Confirmed Booking</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-color in-cart"></span>
+                    <span>In Shopping Cart</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="legend-item">
+                    <span className="legend-color available"></span>
+                    <span>Available</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-color assigned"></span>
+                    <span>Assigned</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-color booked"></span>
+                    <span>Booked</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-color maintenance"></span>
+                    <span>Maintenance</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Shopping Cart Help for Schedulers */}
+          {isScheduler && (
+            <div className="sidebar-section">
+              <h3>How to Request Ice</h3>
+              <div className="help-content">
+                <ol>
+                  <li>Click available ice slots to add to cart</li>
+                  <li>Review items in shopping cart</li>
+                  <li>Submit all requests at once</li>
+                  <li>Wait for arena admin approval</li>
+                </ol>
+                <p className="help-note">
+                  💡 Green slots are available to all programs. Yellow slots are assigned specifically to your program.
+                </p>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
