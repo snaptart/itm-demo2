@@ -1,4 +1,4 @@
-// backend/src/models/index.js (Fixed with proper model loading)
+// backend/src/models/index.js (Updated with New Models)
 const sequelize = require('../config/database');
 
 // Import all models first (Phase 1: Model Definition)
@@ -9,10 +9,16 @@ const ResourceType = require('./ResourceType');
 const FacilityHours = require('./FacilityHours');
 const FacilityPricing = require('./FacilityPricing');
 const Event = require('./Event');
-const Episode = require('./Episode');  // ← This was missing!
+const Episode = require('./Episode');
 const Program = require('./Program');
 const ProgramType = require('./ProgramType');
 const Booking = require('./Booking');
+
+// NEW: Shopping cart and request management models
+const ShoppingCart = require('./ShoppingCart');
+const IceTimeRequest = require('./IceTimeRequest');
+const RealtimeNotification = require('./RealtimeNotification');
+const WebSocketSession = require('./WebSocketSession');
 
 // Additional models that might be referenced
 // const Notification = require('./Notification');
@@ -28,10 +34,15 @@ const models = {
   FacilityHours,
   FacilityPricing,
   Event,
-  Episode,      // ← This was missing!
+  Episode,
   Program,
   ProgramType,
-  Booking
+  Booking,
+  // NEW models
+  ShoppingCart,
+  IceTimeRequest,
+  RealtimeNotification,
+  WebSocketSession
   // Notification,
   // AuditLog
 };
