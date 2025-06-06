@@ -1,10 +1,12 @@
-// frontend/src/hooks/useRealtimeCalendar.js
-import { useEffect, useCallback, useRef } from 'react';
+// frontend/src/hooks/useRealtimeCalendar.js - Fixed Implementation
+import { useEffect, useCallback, useRef, useState } from 'react';
 import websocketService from '../services/websocketService';
 
 export const useRealtimeCalendar = (facilityId, onEventUpdate) => {
   const lockTimeoutRef = useRef(null);
   const currentLocks = useRef(new Set());
+  const [connectionStatus, setConnectionStatus] = useState({ connected: false });
+  const [activeUsers, setActiveUsers] = useState([]);
 
   // Handle episode updates from WebSocket
   const handleEpisodeCreated = useCallback((data) => {
@@ -74,17 +76,38 @@ export const useRealtimeCalendar = (facilityId, onEventUpdate) => {
     }
   }, [onEventUpdate]);
 
+  const handleConnectionStatus = useCallback((status) => {
+    console.log('WebSocket connection status:', status);
+    setConnectionStatus(status);
+  }, []);
+
+  const handleActiveUsersChanged = useCallback((users) => {
+    console.log('Active users changed:', users);
+    setActiveUsers(users);
+  }, []);
+
   // Setup WebSocket listeners
   useEffect(() => {
     if (!facilityId) return;
 
+    console.log('Setting up real-time calendar for facility:', facilityId);
+
     // Connect to WebSocket if not already connected
-    if (!websocketService.isConnected) {
+    if (!websocketService.connected) {
       websocketService.connect();
     }
 
-    // Join facility room
-    websocketService.joinFacility(facilityId);
+    // Wait for connection before joining facility
+    const setupConnection = () => {
+      if (websocketService.connected) {
+        websocketService.joinFacility(facilityId);
+      } else {
+        // Retry after a short delay
+        setTimeout(setupConnection, 1000);
+      }
+    };
+
+    setupConnection();
 
     // Setup event listeners
     websocketService.on('episode_created', handleEpisodeCreated);
@@ -93,8 +116,16 @@ export const useRealtimeCalendar = (facilityId, onEventUpdate) => {
     websocketService.on('episode_moved', handleEpisodeMoved);
     websocketService.on('episode_locked', handleEpisodeLocked);
     websocketService.on('episode_unlocked', handleEpisodeUnlocked);
+    websocketService.on('connection_status', handleConnectionStatus);
+    websocketService.on('active_users_changed', handleActiveUsersChanged);
+
+    // Set initial status
+    setConnectionStatus(websocketService.getConnectionStatus());
+    setActiveUsers(websocketService.getActiveUsers());
 
     return () => {
+      console.log('Cleaning up real-time calendar for facility:', facilityId);
+      
       // Cleanup listeners
       websocketService.off('episode_created', handleEpisodeCreated);
       websocketService.off('episode_updated', handleEpisodeUpdated);
@@ -102,12 +133,15 @@ export const useRealtimeCalendar = (facilityId, onEventUpdate) => {
       websocketService.off('episode_moved', handleEpisodeMoved);
       websocketService.off('episode_locked', handleEpisodeLocked);
       websocketService.off('episode_unlocked', handleEpisodeUnlocked);
+      websocketService.off('connection_status', handleConnectionStatus);
+      websocketService.off('active_users_changed', handleActiveUsersChanged);
 
       // Leave facility room
       websocketService.leaveFacility(facilityId);
     };
   }, [facilityId, handleEpisodeCreated, handleEpisodeUpdated, handleEpisodeDeleted, 
-      handleEpisodeMoved, handleEpisodeLocked, handleEpisodeUnlocked]);
+      handleEpisodeMoved, handleEpisodeLocked, handleEpisodeUnlocked, 
+      handleConnectionStatus, handleActiveUsersChanged]);
 
   // Lock episode for editing
   const lockEpisode = useCallback(async (episodeId) => {
@@ -176,8 +210,8 @@ export const useRealtimeCalendar = (facilityId, onEventUpdate) => {
     unlockEpisode,
     isEpisodeLocked,
     getCurrentLocks,
-    activeUsers: websocketService.getActiveUsers(),
-    connectionStatus: websocketService.getConnectionStatus()
+    activeUsers,
+    connectionStatus
   };
 };
 
@@ -208,6 +242,10 @@ export const useUserPresence = (facilityId) => {
     }
   }, []);
 
+  const handleActiveUsersChanged = useCallback((users) => {
+    setActiveUsers(users);
+  }, []);
+
   useEffect(() => {
     if (!facilityId) return;
 
@@ -215,6 +253,7 @@ export const useUserPresence = (facilityId) => {
     websocketService.on('user_left', handleUserLeft);
     websocketService.on('facility_status', handleFacilityStatus);
     websocketService.on('connection_status', handleConnectionStatus);
+    websocketService.on('active_users_changed', handleActiveUsersChanged);
 
     // Initial status
     setConnectionStatus(websocketService.getConnectionStatus());
@@ -225,8 +264,10 @@ export const useUserPresence = (facilityId) => {
       websocketService.off('user_left', handleUserLeft);
       websocketService.off('facility_status', handleFacilityStatus);
       websocketService.off('connection_status', handleConnectionStatus);
+      websocketService.off('active_users_changed', handleActiveUsersChanged);
     };
-  }, [facilityId, handleUserJoined, handleUserLeft, handleFacilityStatus, handleConnectionStatus]);
+  }, [facilityId, handleUserJoined, handleUserLeft, handleFacilityStatus, 
+      handleConnectionStatus, handleActiveUsersChanged]);
 
   return {
     activeUsers,
@@ -241,6 +282,8 @@ export const useRealtimeNotifications = () => {
   const [unreadCount, setUnreadCount] = useState(0);
 
   const handleNotification = useCallback((notification) => {
+    console.log('Received notification:', notification);
+    
     const newNotification = {
       ...notification,
       id: notification.notification_id || Date.now(),
@@ -278,6 +321,7 @@ export const useRealtimeNotifications = () => {
   }, []);
 
   useEffect(() => {
+    // Setup notification listener
     websocketService.on('notification', handleNotification);
 
     // Load any queued notifications
