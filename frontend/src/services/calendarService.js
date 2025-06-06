@@ -169,10 +169,11 @@ const calendarService = {
         onOptimisticUpdate({ type: 'add', event: optimisticEvent });
       }
       
-      // Send to server
-      const response = await api.post('/api/events', eventData);
+      // Send to server using existing createEvent endpoint
+      const operation = () => api.post('/api/events', eventData);
+      const response = await retryOperation(operation);
       
-      if (response.data.success && response.data.events) {
+      if (response.data && response.data.events) {
         // Replace optimistic event with real server data
         const serverEvents = response.data.events.map(event => ({
           ...event,
@@ -200,7 +201,7 @@ const calendarService = {
         
         return { success: true, data: { events: serverEvents } };
       } else {
-        throw new Error('Server did not return events');
+        throw new Error(response.data?.error || 'Server did not return events');
       }
       
     } catch (error) {
@@ -211,7 +212,7 @@ const calendarService = {
         onOptimisticUpdate({ 
           type: 'remove', 
           tempId: tempId,
-          error: error.response?.data?.message || 'Failed to create event'
+          error: error.response?.data?.message || error.message || 'Failed to create event'
         });
       }
       
@@ -220,7 +221,7 @@ const calendarService = {
       
       return {
         success: false,
-        error: error.response?.data?.message || 'Failed to create event'
+        error: error.response?.data?.message || error.message || 'Failed to create event'
       };
     }
   },
@@ -248,10 +249,11 @@ const calendarService = {
         });
       }
       
-      // Send to server
-      const response = await api.put(`/api/episodes/${episodeId}`, updateData);
+      // Send to server using existing updateEpisode endpoint
+      const operation = () => api.put(`/api/episodes/${episodeId}`, updateData);
+      const response = await retryOperation(operation);
       
-      if (response.data.success) {
+      if (response.data && response.data.message) {
         // Apply final server updates
         eventStateManager.setEventState(episodeId, { loading: false, syncing: false });
         
@@ -271,7 +273,7 @@ const calendarService = {
         
         return { success: true, data: response.data };
       } else {
-        throw new Error('Update failed');
+        throw new Error(response.data?.error || 'Update failed');
       }
       
     } catch (error) {
@@ -280,20 +282,20 @@ const calendarService = {
       // Rollback optimistic changes
       eventStateManager.setEventState(episodeId, { 
         ...originalState, 
-        error: error.response?.data?.message || 'Update failed' 
+        error: error.response?.data?.message || error.message || 'Update failed' 
       });
       
       if (onOptimisticUpdate) {
         onOptimisticUpdate({ 
           type: 'rollback', 
           episodeId,
-          error: error.response?.data?.message || 'Failed to update episode'
+          error: error.response?.data?.message || error.message || 'Failed to update episode'
         });
       }
       
       return {
         success: false,
-        error: error.response?.data?.message || 'Failed to update episode'
+        error: error.response?.data?.message || error.message || 'Failed to update episode'
       };
     }
   },
@@ -315,10 +317,11 @@ const calendarService = {
         });
       }
       
-      // Send delete request to server
-      const response = await api.delete(`/api/episodes/${episodeId}`);
+      // Send delete request to server using existing endpoint
+      const operation = () => api.delete(`/api/episodes/${episodeId}`);
+      const response = await retryOperation(operation);
       
-      if (response.data.success) {
+      if (response.data && response.data.message) {
         // Confirm deletion
         eventStateManager.clearEventState(episodeId);
         
@@ -331,7 +334,7 @@ const calendarService = {
         
         return { success: true, data: response.data };
       } else {
-        throw new Error('Delete failed');
+        throw new Error(response.data?.error || 'Delete failed');
       }
       
     } catch (error) {
@@ -346,7 +349,7 @@ const calendarService = {
             extendedProps: {
               ...removedEvent.extendedProps,
               loading: false,
-              error: error.response?.data?.message || 'Delete failed'
+              error: error.response?.data?.message || error.message || 'Delete failed'
             }
           }
         });
@@ -354,7 +357,7 @@ const calendarService = {
       
       eventStateManager.setEventState(episodeId, { 
         loading: false, 
-        error: error.response?.data?.message || 'Delete failed' 
+        error: error.response?.data?.message || error.message || 'Delete failed' 
       });
       
       if (error.response?.status === 400) {
@@ -366,7 +369,7 @@ const calendarService = {
       
       return {
         success: false,
-        error: error.response?.data?.message || 'Failed to delete episode'
+        error: error.response?.data?.message || error.message || 'Failed to delete episode'
       };
     }
   },
@@ -380,6 +383,12 @@ const calendarService = {
       // Set loading state
       eventStateManager.setEventState(episodeId, { loading: true, syncing: true });
       
+      // Validate move first to reduce failures
+      const validation = await this.validateEpisodeMove(episodeId, newStartTime, newEndTime);
+      if (!validation.success || !validation.data.isValid) {
+        throw new Error(validation.data?.conflicts?.[0]?.description || 'Move validation failed');
+      }
+      
       // Apply move optimistically
       if (onOptimisticUpdate) {
         originalPosition = onOptimisticUpdate({ 
@@ -391,26 +400,29 @@ const calendarService = {
         });
       }
       
-      // Send to server
-      const response = await api.put(`/api/episodes/${episodeId}/move`, {
+      // Send to server with retry logic
+      const operation = () => api.put(`/api/episodes/${episodeId}/move`, {
         new_start_time: newStartTime,
         new_end_time: newEndTime
       });
       
-      if (response.data.success) {
+      const response = await retryOperation(operation);
+      
+      if (response.data && response.data.message) {
         // Confirm move
         eventStateManager.setEventState(episodeId, { loading: false, syncing: false });
         
         if (onOptimisticUpdate) {
           onOptimisticUpdate({ 
             type: 'moveComplete', 
-            episodeId
+            episodeId,
+            serverData: response.data.episode
           });
         }
         
         return { success: true, data: response.data };
       } else {
-        throw new Error('Move failed');
+        throw new Error(response.data?.error || 'Move failed');
       }
       
     } catch (error) {
@@ -428,12 +440,12 @@ const calendarService = {
       
       eventStateManager.setEventState(episodeId, { 
         ...originalState, 
-        error: error.response?.data?.message || 'Move failed' 
+        error: error.response?.data?.message || error.message || 'Move failed' 
       });
       
       return {
         success: false,
-        error: error.response?.data?.message || 'Failed to move episode'
+        error: error.response?.data?.message || error.message || 'Failed to move episode'
       };
     }
   },
@@ -447,6 +459,13 @@ const calendarService = {
       // Set loading state
       eventStateManager.setEventState(episodeId, { loading: true, syncing: true });
       
+      // Basic validation for resize
+      const now = new Date();
+      const newEnd = new Date(newEndTime);
+      if (newEnd <= now) {
+        throw new Error('Cannot resize to past time');
+      }
+      
       // Apply resize optimistically
       if (onOptimisticUpdate) {
         originalEnd = onOptimisticUpdate({ 
@@ -457,25 +476,28 @@ const calendarService = {
         });
       }
       
-      // Send to server
-      const response = await api.put(`/api/episodes/${episodeId}/resize`, {
+      // Send to server with retry logic
+      const operation = () => api.put(`/api/episodes/${episodeId}/resize`, {
         new_end_time: newEndTime
       });
       
-      if (response.data.success) {
+      const response = await retryOperation(operation);
+      
+      if (response.data && response.data.message) {
         // Confirm resize
         eventStateManager.setEventState(episodeId, { loading: false, syncing: false });
         
         if (onOptimisticUpdate) {
           onOptimisticUpdate({ 
             type: 'resizeComplete', 
-            episodeId
+            episodeId,
+            serverData: response.data.episode
           });
         }
         
         return { success: true, data: response.data };
       } else {
-        throw new Error('Resize failed');
+        throw new Error(response.data?.error || 'Resize failed');
       }
       
     } catch (error) {
@@ -492,12 +514,12 @@ const calendarService = {
       
       eventStateManager.setEventState(episodeId, { 
         ...originalState, 
-        error: error.response?.data?.message || 'Resize failed' 
+        error: error.response?.data?.message || error.message || 'Resize failed' 
       });
       
       return {
         success: false,
-        error: error.response?.data?.message || 'Failed to resize episode'
+        error: error.response?.data?.message || error.message || 'Failed to resize episode'
       };
     }
   },
@@ -532,7 +554,7 @@ const calendarService = {
       console.error('Get episode error:', error);
       return {
         success: false,
-        error: error.response?.data?.message || 'Failed to fetch episode details'
+        error: error.response?.data?.message || error.message || 'Failed to fetch episode details'
       };
     }
   },
@@ -540,12 +562,14 @@ const calendarService = {
   // Validate episode move/resize
   async validateEpisodeMove(episodeId, newStartTime, newEndTime, facilityId) {
     try {
-      const response = await api.post('/api/episodes/validate-move', {
+      const operation = () => api.post('/api/episodes/validate-move', {
         episode_id: episodeId,
         new_start_time: newStartTime,
         new_end_time: newEndTime,
         facility_id: facilityId
       });
+      
+      const response = await retryOperation(operation);
       
       return { 
         success: true, 
@@ -559,7 +583,110 @@ const calendarService = {
       console.error('Validate episode move error:', error);
       return {
         success: false,
-        error: error.response?.data?.message || 'Failed to validate move'
+        error: error.response?.data?.message || error.message || 'Failed to validate move'
+      };
+    }
+  },
+
+  // Legacy methods (maintain for backward compatibility)
+  async createEvent(eventData) {
+    try {
+      const operation = () => api.post('/api/events', eventData);
+      const response = await retryOperation(operation);
+      
+      if (response.data && response.data.events) {
+        return { success: true, data: response.data };
+      } else {
+        throw new Error(response.data?.error || 'Failed to create event');
+      }
+    } catch (error) {
+      console.error('Create event error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message || 'Failed to create event'
+      };
+    }
+  },
+
+  async updateEpisode(episodeId, updateData) {
+    try {
+      const operation = () => api.put(`/api/episodes/${episodeId}`, updateData);
+      const response = await retryOperation(operation);
+      
+      if (response.data && response.data.message) {
+        return { success: true, data: response.data };
+      } else {
+        throw new Error(response.data?.error || 'Failed to update episode');
+      }
+    } catch (error) {
+      console.error('Update episode error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message || 'Failed to update episode'
+      };
+    }
+  },
+
+  async deleteEpisode(episodeId) {
+    try {
+      const operation = () => api.delete(`/api/episodes/${episodeId}`);
+      const response = await retryOperation(operation);
+      
+      if (response.data && response.data.message) {
+        return { success: true, data: response.data };
+      } else {
+        throw new Error(response.data?.error || 'Failed to delete episode');
+      }
+    } catch (error) {
+      console.error('Delete episode error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message || 'Failed to delete episode'
+      };
+    }
+  },
+
+  async moveEpisode(episodeId, newStartTime, newEndTime) {
+    try {
+      const operation = () => api.put(`/api/episodes/${episodeId}/move`, {
+        new_start_time: newStartTime,
+        new_end_time: newEndTime
+      });
+      
+      const response = await retryOperation(operation);
+      
+      if (response.data && response.data.message) {
+        return { success: true, data: response.data };
+      } else {
+        throw new Error(response.data?.error || 'Failed to move episode');
+      }
+    } catch (error) {
+      console.error('Move episode error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message || 'Failed to move episode'
+      };
+    }
+  },
+
+  async resizeEpisode(episodeId, newEndTime) {
+    try {
+      const operation = () => api.put(`/api/episodes/${episodeId}/resize`, {
+        new_end_time: newEndTime
+      });
+      
+      const response = await retryOperation(operation);
+      
+      if (response.data && response.data.message) {
+        return { success: true, data: response.data };
+      } else {
+        throw new Error(response.data?.error || 'Failed to resize episode');
+      }
+    } catch (error) {
+      console.error('Resize episode error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message || 'Failed to resize episode'
       };
     }
   },
