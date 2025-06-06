@@ -1,13 +1,12 @@
-// backend/src/routes/episodes.js - Updated with Real-time Middleware
+// backend/src/routes/episodes.js (Fixed for Phase 3B)
 const express = require('express');
 const router = express.Router();
 const episodeController = require('../controllers/episodeController');
 const { authenticateToken, authorizeAdmin } = require('../middleware/auth');
-const realtimeMiddleware = require('../middleware/realtimeMiddleware');
 
 // Add request logging middleware for debugging
 router.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - Episode Route: ${req.method} ${req.originalUrl}`);
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
   if (req.body && Object.keys(req.body).length > 0) {
     console.log('Request body:', JSON.stringify(req.body, null, 2));
   }
@@ -34,47 +33,21 @@ router.get('/:id', episodeController.getEpisodeById);
 router.post('/validate-move', authorizeAdmin, episodeController.validateEpisodeMove);
 router.post('/validate-batch-moves', authorizeAdmin, episodeController.validateBatchMoves);
 
-// Drag and Drop action endpoints (Admin only) - WITH REAL-TIME MIDDLEWARE
-router.put('/:id/move', 
-  authorizeAdmin, 
-  realtimeMiddleware.checkEpisodeLock,
-  realtimeMiddleware.episodeOperations('move'),
-  (req, res, next) => {
-    console.log(`Route matched: PUT /:id/move with id=${req.params.id}`);
-    episodeController.moveEpisode(req, res, next);
-  }
-);
+// Drag and Drop action endpoints (Admin only) - FIXED ORDER
+router.put('/:id/move', authorizeAdmin, (req, res, next) => {
+  console.log(`Route matched: PUT /:id/move with id=${req.params.id}`);
+  episodeController.moveEpisode(req, res, next);
+});
 
-router.put('/:id/resize', 
-  authorizeAdmin, 
-  realtimeMiddleware.checkEpisodeLock,
-  realtimeMiddleware.episodeOperations('resize'),
-  (req, res, next) => {
-    console.log(`Route matched: PUT /:id/resize with id=${req.params.id}`);
-    episodeController.resizeEpisode(req, res, next);
-  }
-);
+router.put('/:id/resize', authorizeAdmin, (req, res, next) => {
+  console.log(`Route matched: PUT /:id/resize with id=${req.params.id}`);
+  episodeController.resizeEpisode(req, res, next);
+});
 
-// Standard CRUD endpoints (Admin only) - WITH REAL-TIME MIDDLEWARE
-router.post('/', 
-  authorizeAdmin, 
-  realtimeMiddleware.episodeOperations('create'),
-  episodeController.createEpisode
-);
-
-router.put('/:id', 
-  authorizeAdmin, 
-  realtimeMiddleware.checkEpisodeLock,
-  realtimeMiddleware.episodeOperations('update'),
-  episodeController.updateEpisode
-);
-
-router.delete('/:id', 
-  authorizeAdmin, 
-  realtimeMiddleware.checkEpisodeLock,
-  realtimeMiddleware.episodeOperations('delete'),
-  episodeController.deleteEpisode
-);
+// Standard CRUD endpoints (Admin only)
+router.post('/', authorizeAdmin, episodeController.createEpisode);
+router.put('/:id', authorizeAdmin, episodeController.updateEpisode);
+router.delete('/:id', authorizeAdmin, episodeController.deleteEpisode);
 
 // Error handling middleware
 router.use((error, req, res, next) => {

@@ -1,21 +1,15 @@
-// backend/src/server.js - Updated with WebSocket Integration
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const http = require('http');
 
 // Load environment variables FIRST
 dotenv.config();
 
 const routes = require('./routes');
 const { sequelize } = require('./models');
-const websocketService = require('./services/websocketService');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-
-// Create HTTP server for WebSocket integration
-const server = http.createServer(app);
 
 // Middleware
 app.use(cors({
@@ -47,17 +41,9 @@ app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });
 
-// Start server with WebSocket support
-server.listen(PORT, async () => {
+// Start server
+app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
-  
-  // Initialize WebSocket service
-  try {
-    websocketService.initialize(server);
-    console.log('WebSocket service initialized successfully');
-  } catch (error) {
-    console.error('Failed to initialize WebSocket service:', error);
-  }
   
   // Test database connection
   try {
@@ -73,35 +59,4 @@ server.listen(PORT, async () => {
   } catch (error) {
     console.error('Unable to connect to the database:', error);
   }
-});
-
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  
-  // Close WebSocket connections
-  if (websocketService.io) {
-    websocketService.io.close();
-  }
-  
-  // Close server
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', async () => {
-  console.log('SIGINT received, shutting down gracefully...');
-  
-  // Close WebSocket connections
-  if (websocketService.io) {
-    websocketService.io.close();
-  }
-  
-  // Close server
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
 });
