@@ -1,4 +1,4 @@
-// frontend/src/components/calendar/CreateEventModal/CreateEventModal.jsx (Simplified - Local Time)
+// frontend/src/components/calendar/CreateEventModal/CreateEventModal.jsx - Enhanced with Optimistic Updates
 import React, { useState, useEffect, useMemo } from 'react';
 import { dateUtils } from '../../../utils/dateUtils';
 import './CreateEventModal.css';
@@ -11,7 +11,8 @@ function CreateEventModal({
   selectedResource,
   facility,
   calendarService,
-  resourceService
+  resourceService,
+  onOptimisticUpdate
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -316,6 +317,7 @@ function CreateEventModal({
     return true;
   };
 
+  // ENHANCED: Use optimistic create instead of full reload
   const handleSubmit = async () => {
     if (!validateForm()) {
       return;
@@ -360,7 +362,10 @@ function CreateEventModal({
         };
       }
       
-      const result = await calendarService.createEvent(eventData);
+      // Use optimistic create if callback provided
+      const result = onOptimisticUpdate 
+        ? await calendarService.createEventOptimistic(eventData, onOptimisticUpdate)
+        : await calendarService.createEvent(eventData);
       
       if (result.success) {
         onSuccess();
@@ -665,6 +670,19 @@ function CreateEventModal({
                 </label>
               </div>
             </div>
+
+            {/* Show loading indicator during optimistic create */}
+            {loading && (
+              <div className="optimistic-create-indicator">
+                <div className="create-progress">
+                  <span className="progress-icon">⏳</span>
+                  <span className="progress-text">Creating ice time...</span>
+                </div>
+                <p className="progress-note">
+                  Your ice time will appear on the calendar immediately and sync with the server.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="modal-footer">
@@ -682,7 +700,14 @@ function CreateEventModal({
               onClick={handleSubmit}
               disabled={loading || (businessHoursValidation && !businessHoursValidation.isValid)}
             >
-              {loading ? 'Creating...' : 'Create Ice Time'}
+              {loading ? (
+                <>
+                  <span className="btn-spinner"></span>
+                  Creating...
+                </>
+              ) : (
+                'Create Ice Time'
+              )}
             </button>
           </div>
         </div>
@@ -692,4 +717,3 @@ function CreateEventModal({
 }
 
 export default CreateEventModal;
-    

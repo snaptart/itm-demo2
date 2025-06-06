@@ -1,4 +1,4 @@
-// frontend/src/pages/CalendarPage.jsx - Enhanced for Program Schedulers
+// frontend/src/pages/CalendarPage.jsx - Enhanced with Optimistic Updates
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CalendarView from '../components/calendar/CalendarView/CalendarView';
 import CalendarSidebar from '../components/calendar/CalendarSidebar/CalendarSidebar';
@@ -10,7 +10,6 @@ import LoadingSpinner from '../components/common/LoadingSpinner/LoadingSpinner';
 import ErrorMessage from '../components/common/ErrorMessage/ErrorMessage';
 import { ToastContainer, useToast } from '../components/common/Toast/Toast';
 import calendarService from '../services/calendarService';
-import dragDropService from '../services/dragDropService';
 import facilityService from '../services/facilityService';
 import resourceService from '../services/resourceService';
 import schedulerService from '../services/schedulerService';
@@ -50,12 +49,11 @@ function CalendarPage() {
   // Toast notifications
   const { toasts, addToast, removeToast, success, error: errorToast, info, warning } = useToast();
   
-  // Ref to store the latest events for optimistic updates
-  const eventsRef = useRef(events);
-  eventsRef.current = events;
-  
   // Request cancellation
   const loadEventsAbortController = useRef(null);
+  
+  // Track optimistic updates to prevent conflicts
+  const optimisticOperations = useRef(new Set());
   
   const currentUser = authService.getCurrentUser();
   const isAdmin = currentUser?.user_type === 'admin';
@@ -69,13 +67,15 @@ function CalendarPage() {
       loadUserPrograms();
     }
     
+    // Subscribe to calendar service state changes
+    const unsubscribe = calendarService.eventStateManager.addListener(handleEventStateChange);
+    
     // Cleanup on unmount
     return () => {
       if (loadEventsAbortController.current) {
         loadEventsAbortController.current.abort();
       }
-      dragDropService.cleanup();
-      // Clear any pending timeouts
+      unsubscribe();
       setIsLoadingEvents(false);
       setIsDragging(false);
     };
@@ -90,6 +90,241 @@ function CalendarPage() {
       return () => clearTimeout(timeoutId);
     }
   }, [selectedFacility, selectedResources, calendarDate, calendarView, viewFilters, selectedProgram]);
+
+  // Handle real-time event state changes
+  const handleEventStateChange = useCallback((update) => {
+    if (update.type === 'stateChange') {
+      setEvents(prevEvents => 
+        prevEvents.map(event => {
+          if (event.extendedProps?.episodeId === update.eventId) {
+            return {
+              ...event,
+              extendedProps: {
+                ...event.extendedProps,
+                ...update.state
+              }
+            };
+          }
+          return event;
+        })
+      );
+    }
+  }, []);
+
+  // OPTIMISTIC UPDATE HANDLER - Core function that updates calendar without full reload
+  const handleOptimisticUpdate = useCallback((updateData) => {
+    const { type, episodeId, eventId, tempId } = updateData;
+    
+    setEvents(prevEvents => {
+      switch (type) {
+        case 'add':
+          // Add new optimistic event
+          return [...prevEvents, updateData.event];
+          
+        case 'replace':
+          // Replace temporary event with real server data
+          return prevEvents
+            .filter(event => event.id !== updateData.tempId)
+            .concat(updateData.events);
+            
+        case 'remove':
+          if (updateData.optimistic) {
+            // Store removed event for potential rollback
+            const removedEvent = prevEvents.find(event => 
+              event.extendedProps?.episodeId === episodeId
+            );
+            updateData.removedEvent = removedEvent;
+            return prevEvents.filter(event => 
+              event.extendedProps?.episodeId !== episodeId
+            );
+          } else if (tempId) {
+            // Remove temporary event on error
+            return prevEvents.filter(event => event.id !== tempId);
+          }
+          return prevEvents;
+          
+        case 'restore':
+          // Restore event after failed delete
+          return [...prevEvents, updateData.event];
+          
+        case 'update':
+          // Apply optimistic updates to existing event
+          return prevEvents.map(event => {
+            if (event.extendedProps?.episodeId === episodeId) {
+              return {
+                ...event,
+                title: updateData.updates.episode_title || event.title,
+                backgroundColor: updateData.updates.extendedProps?.loading ? '#e6f3ff' : event.backgroundColor,
+                extendedProps: {
+                  ...event.extendedProps,
+                  ...updateData.updates.extendedProps,
+                  status: updateData.updates.episode_status || event.extendedProps.status,
+                  price: updateData.updates.episode_price || event.extendedProps.price
+                }
+              };
+            }
+            return event;
+          });
+          
+        case 'updateComplete':
+          // Finalize successful update
+          return prevEvents.map(event => {
+            if (event.extendedProps?.episodeId === episodeId) {
+              return {
+                ...event,
+                backgroundColor: calendarService.getStatusColorMap()[updateData.data.episode_status]?.backgroundColor || event.backgroundColor,
+                extendedProps: {
+                  ...event.extendedProps,
+                  ...updateData.updates.extendedProps,
+                  status: updateData.data.episode_status,
+                  loading: false,
+                  syncing: false
+                }
+              };
+            }
+            return event;
+          });
+          
+        case 'rollback':
+          // Rollback failed optimistic update
+          return prevEvents.map(event => {
+            if (event.extendedProps?.episodeId === episodeId) {
+              return {
+                ...event,
+                extendedProps: {
+                  ...event.extendedProps,
+                  loading: false,
+                  syncing: false,
+                  error: updateData.error
+                }
+              };
+            }
+            return event;
+          });
+          
+        case 'move':
+          if (updateData.optimistic) {
+            // Store original position for potential rollback
+            return prevEvents.map(event => {
+              if (event.extendedProps?.episodeId === episodeId) {
+                updateData.originalStart = event.start;
+                updateData.originalEnd = event.end;
+                return {
+                  ...event,
+                  start: updateData.newStart,
+                  end: updateData.newEnd,
+                  backgroundColor: '#e6f3ff', // Loading color
+                  extendedProps: {
+                    ...event.extendedProps,
+                    loading: true,
+                    syncing: true
+                  }
+                };
+              }
+              return event;
+            });
+          }
+          return prevEvents;
+          
+        case 'moveComplete':
+          // Confirm successful move
+          return prevEvents.map(event => {
+            if (event.extendedProps?.episodeId === episodeId) {
+              return {
+                ...event,
+                backgroundColor: calendarService.getStatusColorMap()[event.extendedProps.status]?.backgroundColor || event.backgroundColor,
+                extendedProps: {
+                  ...event.extendedProps,
+                  loading: false,
+                  syncing: false
+                }
+              };
+            }
+            return event;
+          });
+          
+        case 'revert':
+          // Revert failed move
+          return prevEvents.map(event => {
+            if (event.extendedProps?.episodeId === episodeId) {
+              return {
+                ...event,
+                start: updateData.originalStart,
+                end: updateData.originalEnd,
+                backgroundColor: calendarService.getStatusColorMap()[event.extendedProps.status]?.backgroundColor || event.backgroundColor,
+                extendedProps: {
+                  ...event.extendedProps,
+                  loading: false,
+                  syncing: false,
+                  error: 'Move failed'
+                }
+              };
+            }
+            return event;
+          });
+          
+        case 'resize':
+          if (updateData.optimistic) {
+            return prevEvents.map(event => {
+              if (event.extendedProps?.episodeId === episodeId) {
+                updateData.originalEnd = event.end;
+                return {
+                  ...event,
+                  end: updateData.newEnd,
+                  backgroundColor: '#e6f3ff', // Loading color
+                  extendedProps: {
+                    ...event.extendedProps,
+                    loading: true,
+                    syncing: true
+                  }
+                };
+              }
+              return event;
+            });
+          }
+          return prevEvents;
+          
+        case 'resizeComplete':
+          // Confirm successful resize
+          return prevEvents.map(event => {
+            if (event.extendedProps?.episodeId === episodeId) {
+              return {
+                ...event,
+                backgroundColor: calendarService.getStatusColorMap()[event.extendedProps.status]?.backgroundColor || event.backgroundColor,
+                extendedProps: {
+                  ...event.extendedProps,
+                  loading: false,
+                  syncing: false
+                }
+              };
+            }
+            return event;
+          });
+          
+        case 'removeEvent':
+          // Remove all episodes from an event
+          if (updateData.optimistic) {
+            const removedEvents = prevEvents.filter(event => 
+              event.extendedProps?.eventId === eventId
+            );
+            updateData.removedEvents = removedEvents;
+            return prevEvents.filter(event => 
+              event.extendedProps?.eventId !== eventId
+            );
+          }
+          return prevEvents;
+          
+        case 'restoreEvents':
+          // Restore events after failed delete
+          return [...prevEvents, ...updateData.events];
+          
+        default:
+          return prevEvents;
+      }
+    });
+    
+    return updateData.removedEvent || updateData.originalStart || updateData.originalEnd;
+  }, []);
 
   // Load user's programs if scheduler
   const loadUserPrograms = async () => {
@@ -292,9 +527,11 @@ function CalendarPage() {
     setSelectedEvent(null);
   };
 
+  // ENHANCED: Use optimistic updates instead of full reload
   const handleEventUpdate = async () => {
-    // Reload calendar events after update
-    await loadCalendarEvents();
+    // Event details are updated optimistically by the modal
+    // No need to reload entire calendar
+    success('Ice time updated successfully');
   };
 
   const handleCreateEvent = () => {
@@ -328,9 +565,11 @@ function CalendarPage() {
     setSelectedDateForCreate(null);
   };
 
+  // ENHANCED: Use optimistic updates instead of full reload
   const handleCreateSuccess = async () => {
     success('Ice time created successfully');
-    await loadCalendarEvents();
+    // Events are added optimistically by the create modal
+    // No need to reload entire calendar
     setShowCreateModal(false);
     setShowRequestModal(false);
     setSelectedDateForCreate(null);
@@ -452,7 +691,21 @@ function CalendarPage() {
       if (result.success) {
         success(`Submitted ${shoppingCart.length} ice time requests`);
         handleClearCart();
-        await loadCalendarEvents();
+        // Optimistically update affected events to 'pending' status
+        const cartEpisodeIds = shoppingCart.map(item => item.episodeId);
+        setEvents(prev => prev.map(event => 
+          cartEpisodeIds.includes(event.extendedProps?.episodeId)
+            ? {
+                ...event,
+                extendedProps: {
+                  ...event.extendedProps,
+                  status: 'pending',
+                  inShoppingCart: false
+                },
+                backgroundColor: calendarService.getStatusColorMap()['pending']?.backgroundColor
+              }
+            : event
+        ));
       } else {
         errorToast(result.error || 'Failed to submit requests');
       }
@@ -477,7 +730,7 @@ function CalendarPage() {
     }));
   };
 
-  // Drag and drop handlers (admin only)
+  // ENHANCED: Drag and drop handlers with optimistic updates
   const handleDragStart = (info) => {
     if (!isAdmin) return;
     
@@ -496,62 +749,82 @@ function CalendarPage() {
     setIsDragging(false);
   };
 
+  // ENHANCED: Use optimistic move instead of full reload
   const handleEventDrop = async (moveData) => {
     if (!isAdmin) {
       moveData.revert();
       return;
     }
 
+    const episodeId = moveData.episodeId;
+    const operationId = `move_${episodeId}_${Date.now()}`;
+    
+    // Prevent duplicate operations
+    if (optimisticOperations.current.has(operationId)) {
+      moveData.revert();
+      return;
+    }
+    
+    optimisticOperations.current.add(operationId);
+
     try {
-      // Use the drag drop service to handle the move
-      const result = await dragDropService.moveEpisode({
-        episodeId: moveData.episodeId,
-        newStartTime: moveData.newStartTime,
-        newEndTime: moveData.newEndTime,
-        revert: moveData.revert
-      });
+      const result = await calendarService.moveEpisodeOptimistic(
+        episodeId,
+        moveData.newStartTime,
+        moveData.newEndTime,
+        handleOptimisticUpdate
+      );
 
       if (result.success) {
-        success(result.message || 'Ice time moved successfully');
-        // Reload events to ensure consistency
-        await loadCalendarEvents();
+        success('Ice time moved successfully');
       } else {
         errorToast(result.error || 'Failed to move ice time');
       }
       
     } catch (error) {
-      moveData.revert();
       errorToast('Failed to move ice time');
       console.error('Drop handling error:', error);
+    } finally {
+      optimisticOperations.current.delete(operationId);
     }
   };
 
+  // ENHANCED: Use optimistic resize instead of full reload
   const handleEventResize = async (resizeData) => {
     if (!isAdmin) {
       resizeData.revert();
       return;
     }
 
+    const episodeId = resizeData.episodeId;
+    const operationId = `resize_${episodeId}_${Date.now()}`;
+    
+    // Prevent duplicate operations
+    if (optimisticOperations.current.has(operationId)) {
+      resizeData.revert();
+      return;
+    }
+    
+    optimisticOperations.current.add(operationId);
+
     try {
-      // Use the drag drop service to handle the resize
-      const result = await dragDropService.resizeEpisode({
-        episodeId: resizeData.episodeId,
-        newEndTime: resizeData.newEndTime,
-        revert: resizeData.revert
-      });
+      const result = await calendarService.resizeEpisodeOptimistic(
+        episodeId,
+        resizeData.newEndTime,
+        handleOptimisticUpdate
+      );
 
       if (result.success) {
-        success(result.message || 'Ice time resized successfully');
-        // Reload events to ensure consistency
-        await loadCalendarEvents();
+        success('Ice time duration updated successfully');
       } else {
         errorToast(result.error || 'Failed to resize ice time');
       }
       
     } catch (error) {
-      resizeData.revert();
       errorToast('Failed to resize ice time');
       console.error('Resize handling error:', error);
+    } finally {
+      optimisticOperations.current.delete(operationId);
     }
   };
 
@@ -709,6 +982,7 @@ function CalendarPage() {
           onSuccess={handleEventSuccess}
           onError={handleEventError}
           calendarService={calendarService}
+          onOptimisticUpdate={handleOptimisticUpdate}
         />
       )}
 
@@ -722,6 +996,7 @@ function CalendarPage() {
           facility={selectedFacility}
           calendarService={calendarService}
           resourceService={resourceService}
+          onOptimisticUpdate={handleOptimisticUpdate}
         />
       )}
 

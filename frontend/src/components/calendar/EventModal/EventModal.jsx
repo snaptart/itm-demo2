@@ -1,4 +1,4 @@
-// frontend/src/components/calendar/EventModal/EventModal.jsx - Enhanced Version
+// frontend/src/components/calendar/EventModal/EventModal.jsx - Enhanced with Optimistic Updates
 import React, { useState, useEffect } from 'react';
 import ConfirmationModal from '../../common/ConfirmationModal/ConfirmationModal';
 import LoadingSpinner from '../../common/LoadingSpinner/LoadingSpinner';
@@ -13,7 +13,8 @@ function EventModal({
   onUpdate, 
   onSuccess,
   onError,
-  calendarService 
+  calendarService,
+  onOptimisticUpdate 
 }) {
   const [loading, setLoading] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(true);
@@ -168,6 +169,7 @@ function EventModal({
     return Object.keys(errors).length === 0;
   };
 
+  // ENHANCED: Use optimistic updates instead of full reload
   const handleSave = async () => {
     if (!validateForm()) {
       return;
@@ -191,12 +193,23 @@ function EventModal({
         assigned_to_program_id: editData.assigned_to_program_id || null
       };
 
-      const result = await calendarService.updateEpisode(episodeDetails.episode_id, updateData);
+      // Use optimistic update if callback provided
+      const result = onOptimisticUpdate 
+        ? await calendarService.updateEpisodeOptimistic(
+            episodeDetails.episode_id, 
+            updateData, 
+            onOptimisticUpdate
+          )
+        : await calendarService.updateEpisode(episodeDetails.episode_id, updateData);
       
       if (result.success) {
         setIsEditing(false);
-        // Reload episode details
-        await loadEpisodeDetails();
+        
+        // Update local episode details
+        setEpisodeDetails(prev => ({
+          ...prev,
+          ...updateData
+        }));
         
         if (onSuccess) {
           onSuccess('Ice time updated successfully');
@@ -223,6 +236,7 @@ function EventModal({
     }
   };
 
+  // ENHANCED: Use optimistic delete instead of full reload
   const handleDelete = async () => {
     if (!calendarService || !episodeDetails) {
       setError('Unable to delete episode');
@@ -233,7 +247,13 @@ function EventModal({
       setIsDeleting(true);
       setError('');
 
-      const result = await calendarService.deleteEpisode(episodeDetails.episode_id);
+      // Use optimistic delete if callback provided
+      const result = onOptimisticUpdate
+        ? await calendarService.deleteEpisodeOptimistic(
+            episodeDetails.episode_id,
+            onOptimisticUpdate
+          )
+        : await calendarService.deleteEpisode(episodeDetails.episode_id);
       
       if (result.success) {
         if (onSuccess) {
@@ -405,6 +425,13 @@ function EventModal({
                         <small className="loading-text">Loading programs...</small>
                       )}
                     </div>
+
+                    {/* Show loading indicator during optimistic update */}
+                    {isSaving && (
+                      <div className="save-indicator">
+                        <LoadingSpinner size="small" message="Saving changes..." />
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="event-details">
@@ -529,7 +556,14 @@ function EventModal({
                       disabled={!canDelete() || loading}
                       title={!canDelete() ? 'Cannot delete episode with bookings' : ''}
                     >
-                      Delete
+                      {isDeleting ? (
+                        <>
+                          <span className="btn-spinner"></span>
+                          Deleting...
+                        </>
+                      ) : (
+                        'Delete'
+                      )}
                     </button>
                     <button 
                       className="btn btn-primary" 
